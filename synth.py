@@ -87,11 +87,15 @@ def synthesize_note(key: int, duration_seconds: float, track_idx: int, start_bea
                     intensity: float, hold_seconds: float, velocity: int = 100) -> np.ndarray:
     """
     Synthesize a single piano note using 64 harmonics.
+    Renders full envelope decay (cap 3.5s) regardless of scored duration.
     Returns mono audio samples.
     """
     f0 = key_to_hz(key)
-    num_samples = int(duration_seconds * SAMPLE_RATE)
-    t = np.linspace(0, duration_seconds, num_samples, endpoint=False)
+    
+    # Render long enough for envelope to decay, cap at 3.5s
+    render_duration = min(3.5, duration_seconds + 2.0)
+    num_samples = int(render_duration * SAMPLE_RATE)
+    t = np.linspace(0, render_duration, num_samples, endpoint=False)
     
     signal = np.zeros(num_samples)
     
@@ -101,7 +105,8 @@ def synthesize_note(key: int, duration_seconds: float, track_idx: int, start_bea
     # Generate 64 harmonics
     for H in range(1, 65):
         freq = H * f0
-        if freq >= NYQUIST:
+        # Drop harmonics at 0.92*Nyquist to avoid aliasing artifacts
+        if freq >= 0.92 * NYQUIST:
             continue
         
         h = H - 1  # 0-based for intensity formula
@@ -116,20 +121,27 @@ def synthesize_note(key: int, duration_seconds: float, track_idx: int, start_bea
         harmonic = envelope * np.sin(2 * np.pi * freq * t)
         signal += harmonic
     
+    # Apply short fade-out at the very end (~12ms)
+    fade_samples = int(0.012 * SAMPLE_RATE)
+    if len(signal) > fade_samples:
+        fade = np.linspace(1.0, 0.0, fade_samples)
+        signal[-fade_samples:] *= fade
+    
     return signal
 
 
 def synthesize_track(track: Track, bpm: float, track_idx: int, total_beats: float) -> np.ndarray:
     """Synthesize all notes in a track, optionally with delay voice."""
     duration_seconds = (total_beats * 60.0) / bpm
-    num_samples = int(duration_seconds * SAMPLE_RATE)
+    # Add extra padding for long note tails (3.5s cap per note)
+    num_samples = int((duration_seconds + 4.0) * SAMPLE_RATE)
     signal = np.zeros(num_samples)
     
     for note in track.notes:
         note_start_sec = (note.start_beat * 60.0) / bpm
         note_dur_sec = (note.duration_beats * 60.0) / bpm
         
-        # Synthesize main voice
+        # Synthesize main voice (renders full envelope decay)
         note_signal = synthesize_note(
             note.key, note_dur_sec, track_idx, note.start_beat,
             track.intensity, track.hold_seconds, note.velocity
@@ -144,7 +156,7 @@ def synthesize_track(track: Track, bpm: float, track_idx: int, total_beats: floa
         
         signal[start_sample:end_sample] += note_signal
         
-        # Add delay voice if enabled
+        # Add delay voice if enabled (at 0.4 gain to avoid comb filtering)
         if track.delay:
             delay_sec = 30.0 / 160.0  # 30/160 seconds
             delay_samples = int(delay_sec * SAMPLE_RATE)
@@ -152,10 +164,11 @@ def synthesize_track(track: Track, bpm: float, track_idx: int, total_beats: floa
             delay_end = delay_start + len(note_signal)
             
             if delay_start < num_samples:
+                delay_signal = note_signal * 0.4  # Reduce delay gain
                 if delay_end > num_samples:
-                    note_signal = note_signal[:num_samples - delay_start]
+                    delay_signal = delay_signal[:num_samples - delay_start]
                     delay_end = num_samples
-                signal[delay_start:delay_end] += note_signal
+                signal[delay_start:delay_end] += delay_signal
     
     return signal
 
@@ -176,11 +189,12 @@ def synthesize_song(song: Song) -> Tuple[np.ndarray, int]:
         # No notes, return silence
         return np.zeros(SAMPLE_RATE), SAMPLE_RATE
     
-    # Add some padding
+    # Add padding for note tails (3.5s max per note + 2 beats)
     total_beats += 2.0
     
     duration_seconds = (total_beats * 60.0) / song.bpm
-    num_samples = int(duration_seconds * SAMPLE_RATE)
+    # Extra padding for long note decays
+    num_samples = int((duration_seconds + 4.0) * SAMPLE_RATE)
     mixed = np.zeros(num_samples)
     
     # Mix all unmuted tracks

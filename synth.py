@@ -29,6 +29,20 @@ def key_decay_scale(key: int) -> float:
     return np.clip(scale, 0.55, 3.5)
 
 
+def harmonic_detune_cents(track_idx: int, key: int, start_beat: float, harmonic_num: int) -> float:
+    """
+    Generate micro-detune in cents (±~3.5 cents) per harmonic.
+    Separate seed from decay for organic timbre variation.
+    """
+    # Use different hash prefix to separate from decay RNG
+    seed_val = hash(('detune', track_idx, key, start_beat, harmonic_num)) % (2**32)
+    rng = np.random.RandomState(seed_val)
+    
+    # Uniform distribution ±3.5 cents
+    cents = rng.uniform(-3.5, 3.5)
+    return cents
+
+
 def box_muller_decay(track_idx: int, key: int, start_beat: float, harmonic_num: int) -> float:
     """
     Generate decay rate using Box-Muller transform.
@@ -127,6 +141,11 @@ def synthesize_note(key: int, duration_seconds: float, track_idx: int, start_bea
     # Generate 64 harmonics
     for H in range(1, 65):
         freq = H * f0
+        
+        # Apply micro-detune (±~3.5 cents) for organic timbre
+        detune_cents = harmonic_detune_cents(track_idx, key, start_beat, H)
+        freq *= 2 ** (detune_cents / 1200)
+        
         # Drop harmonics at 0.92*Nyquist to avoid aliasing artifacts
         if freq >= 0.92 * NYQUIST:
             continue
@@ -150,6 +169,23 @@ def synthesize_note(key: int, duration_seconds: float, track_idx: int, start_bea
         signal[-fade_samples:] *= fade
     
     return signal
+
+
+def apply_lowpass_filter(signal: np.ndarray, cutoff_hz: float = 13000) -> np.ndarray:
+    """
+    Apply gentle one-pole lowpass filter.
+    Simple IIR: y[n] = (1-a)*x[n] + a*y[n-1] where a = exp(-2*pi*fc/fs).
+    """
+    a = np.exp(-2 * np.pi * cutoff_hz / SAMPLE_RATE)
+    filtered = np.zeros_like(signal)
+    
+    for i in range(len(signal)):
+        if i == 0:
+            filtered[i] = (1 - a) * signal[i]
+        else:
+            filtered[i] = (1 - a) * signal[i] + a * filtered[i - 1]
+    
+    return filtered
 
 
 def synthesize_track(track: Track, bpm: float, track_idx: int, total_beats: float) -> np.ndarray:
@@ -198,7 +234,8 @@ def synthesize_track(track: Track, bpm: float, track_idx: int, total_beats: floa
 def synthesize_song(song: Song) -> Tuple[np.ndarray, int]:
     """
     Synthesize entire song by mixing all unmuted tracks.
-    Returns (audio_array, sample_rate).
+    Applies master LP filter, creates Haas stereo, and normalizes.
+    Returns (stereo_audio_array, sample_rate) - shape (num_samples, 2).
     """
     # Calculate total duration
     total_beats = 0.0
@@ -208,8 +245,9 @@ def synthesize_song(song: Song) -> Tuple[np.ndarray, int]:
             total_beats = max(total_beats, max_beat)
     
     if total_beats == 0:
-        # No notes, return silence
-        return np.zeros(SAMPLE_RATE), SAMPLE_RATE
+        # No notes, return stereo silence
+        silence = np.zeros((SAMPLE_RATE, 2))
+        return silence.astype(np.int16), SAMPLE_RATE
     
     # Add padding for note tails (3.5s max per note + 2 beats)
     total_beats += 2.0
@@ -217,9 +255,9 @@ def synthesize_song(song: Song) -> Tuple[np.ndarray, int]:
     duration_seconds = (total_beats * 60.0) / song.bpm
     # Extra padding for long note decays
     num_samples = int((duration_seconds + 4.0) * SAMPLE_RATE)
-    mixed = np.zeros(num_samples)
+    mixed_mono = np.zeros(num_samples)
     
-    # Mix all unmuted tracks
+    # Mix all unmuted tracks to mono
     for track_idx, track in enumerate(song.tracks):
         if not track.mute:
             track_signal = synthesize_track(track, song.bpm, track_idx, total_beats)
@@ -228,27 +266,44 @@ def synthesize_song(song: Song) -> Tuple[np.ndarray, int]:
                 track_signal = np.pad(track_signal, (0, num_samples - len(track_signal)))
             elif len(track_signal) > num_samples:
                 track_signal = track_signal[:num_samples]
-            mixed += track_signal
+            mixed_mono += track_signal
     
-    # Peak normalize to 0.89
-    max_val = np.abs(mixed).max()
+    # Apply soft master lowpass filter (~13 kHz)
+    mixed_mono = apply_lowpass_filter(mixed_mono, cutoff_hz=13000)
+    
+    # Create Haas stereo effect (~15ms delay on right channel)
+    haas_delay_ms = 15
+    haas_delay_samples = int((haas_delay_ms / 1000.0) * SAMPLE_RATE)
+    
+    # Left channel: original
+    left = mixed_mono.copy()
+    
+    # Right channel: delayed by ~15ms
+    right = np.zeros_like(mixed_mono)
+    right[haas_delay_samples:] = mixed_mono[:-haas_delay_samples]
+    
+    # Stack into stereo array
+    stereo = np.stack([left, right], axis=1)
+    
+    # Peak normalize across both channels to 0.89
+    max_val = np.abs(stereo).max()
     if max_val > 0:
-        mixed = mixed * (0.89 / max_val)
+        stereo = stereo * (0.89 / max_val)
     
     # Convert to 16-bit PCM
-    audio_int16 = (mixed * 32767).astype(np.int16)
+    audio_int16 = (stereo * 32767).astype(np.int16)
     
     return audio_int16, SAMPLE_RATE
 
 
 def export_wav(filename: str, song: Song) -> None:
-    """Export song to WAV file."""
+    """Export song to stereo WAV file."""
     import wave
     
     audio_data, sample_rate = synthesize_song(song)
     
     with wave.open(filename, 'wb') as wav_file:
-        wav_file.setnchannels(1)  # Mono
+        wav_file.setnchannels(2)  # Stereo
         wav_file.setsampwidth(2)  # 16-bit
         wav_file.setframerate(sample_rate)
         wav_file.writeframes(audio_data.tobytes())

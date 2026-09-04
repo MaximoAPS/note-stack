@@ -82,7 +82,9 @@ f = 2^((key - 49) / 12) × 440 Hz
 ### Output
 - Sample rate: 44,100 Hz
 - Bit depth: 16-bit PCM
-- Channels: Mono
+- Channels: Stereo (Haas effect ~15ms for spatial width)
+- Master filter: Soft lowpass ~13 kHz
+- Micro-detune: ±3.5 cents per harmonic for organic timbre
 - Peak normalization: 0.89
 
 ## Project Structure

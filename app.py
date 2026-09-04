@@ -217,11 +217,11 @@ def main():
             with st.spinner("Synthesizing..."):
                 audio_data, sample_rate = synthesize_song(st.session_state.song)
                 
-                # Convert to bytes for st.audio
+                # Convert to bytes for st.audio (stereo)
                 audio_bytes = io.BytesIO()
                 import wave
                 with wave.open(audio_bytes, 'wb') as wav_file:
-                    wav_file.setnchannels(1)
+                    wav_file.setnchannels(2)  # Stereo
                     wav_file.setsampwidth(2)
                     wav_file.setframerate(sample_rate)
                     wav_file.writeframes(audio_data.tobytes())

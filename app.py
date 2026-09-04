@@ -183,6 +183,28 @@ def main():
                     st.session_state.song = load_midi(str(midi_path))
                     st.rerun()
     
+    # MIDI file upload
+    uploaded_file = st.file_uploader("Upload MIDI file", type=["mid", "midi"])
+    if uploaded_file is not None:
+        try:
+            # Write to temporary file
+            import tempfile
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".mid") as tmp_file:
+                tmp_file.write(uploaded_file.read())
+                tmp_path = tmp_file.name
+            
+            # Load the MIDI file
+            st.session_state.song = load_midi(tmp_path)
+            
+            # Clean up temp file
+            import os
+            os.unlink(tmp_path)
+            
+            st.success(f"✓ Loaded {uploaded_file.name}")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error loading MIDI: {str(e)}")
+    
     # BPM slider
     st.session_state.song.bpm = st.slider("BPM", 40, 240, 
                                           int(st.session_state.song.bpm), 1)

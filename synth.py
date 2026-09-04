@@ -19,10 +19,21 @@ def harmonic_intensity(h: int) -> float:
     return 1 / (1.24729 * h**1.5 + 1)
 
 
+def key_decay_scale(key: int) -> float:
+    """
+    Key-dependent decay scaling like a real piano.
+    Higher keys decay faster, lower keys ring longer.
+    C4 (key 40) is baseline 1.0. Clipped to [0.55, 3.5].
+    """
+    scale = 2 ** ((key - 40) / 18)
+    return np.clip(scale, 0.55, 3.5)
+
+
 def box_muller_decay(track_idx: int, key: int, start_beat: float, harmonic_num: int) -> float:
     """
     Generate decay rate using Box-Muller transform.
     Mean=10.2, std=3.54. Seeded deterministically for repeatability.
+    Scaled by key_decay_scale for realistic piano behavior.
     """
     # Create deterministic seed from inputs
     seed_val = hash((track_idx, key, start_beat, harmonic_num)) % (2**32)
@@ -34,6 +45,10 @@ def box_muller_decay(track_idx: int, key: int, start_beat: float, harmonic_num: 
     
     # Box-Muller: mean + std * sqrt(-2*ln(U1)) * cos(2*pi*U2)
     n = 3.54 * np.sqrt(-2 * np.log(u1)) * np.cos(2 * np.pi * u2) + 10.2
+    
+    # Scale by key: higher keys decay faster
+    n *= key_decay_scale(key)
+    
     return n
 
 
@@ -87,13 +102,20 @@ def synthesize_note(key: int, duration_seconds: float, track_idx: int, start_bea
                     intensity: float, hold_seconds: float, velocity: int = 100) -> np.ndarray:
     """
     Synthesize a single piano note using 64 harmonics.
-    Renders full envelope decay (cap 3.5s) regardless of scored duration.
+    Renders full envelope decay with key-dependent tail length (cap 3.5s).
+    Higher keys decay faster and need shorter buffers.
     Returns mono audio samples.
     """
     f0 = key_to_hz(key)
     
-    # Render long enough for envelope to decay, cap at 3.5s
-    render_duration = min(3.5, duration_seconds + 2.0)
+    # Key-dependent decay: higher keys ring shorter
+    decay_scale = key_decay_scale(key)
+    
+    # Extra ring time inversely proportional to decay rate
+    extra_ring = 2.0 / decay_scale
+    
+    # Render long enough for envelope to decay, cap at 3.5s, never shorter than scored
+    render_duration = max(duration_seconds, min(3.5, duration_seconds + extra_ring))
     num_samples = int(render_duration * SAMPLE_RATE)
     t = np.linspace(0, render_duration, num_samples, endpoint=False)
     

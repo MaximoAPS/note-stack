@@ -53,14 +53,14 @@ The app will open in your browser at `http://localhost:8501`.
 
 ### MIDI Import
 
-Load MIDI files from the `demos/` folder:
+Load MIDI files from the `demos/` folder or **upload your own** using the file uploader:
 - MIDI note numbers are automatically converted (MIDI note - 20 = piano key)
 - Multiple channels are split into separate tracks
 - Tempo is extracted from MIDI file
 
 ## Synthesis Model
 
-The timbre synthesis precisely matches the Desmos "Piano Song" graph:
+The timbre synthesis precisely matches the Desmos "Piano Song" graph with realistic key-dependent decay:
 
 ### Key to Frequency
 ```
@@ -69,14 +69,15 @@ f = 2^((key - 49) / 12) × 440 Hz
 
 ### Harmonics
 - 64 harmonics per note: `f_h = H × f0` (H = 1 to 64)
-- Skip harmonics above Nyquist frequency (22,050 Hz)
+- Skip harmonics above 0.92×Nyquist (20,286 Hz)
 - Intensity: `I(h) = 1 / (1.24729 × h^1.5 + 1)` where h = H - 1
 
 ### Envelope
 - **Attack**: Polynomial rise from t=0.05s to peak at t=0.172s
 - **Sustain**: Time freeze between 0.34s and d seconds
 - **Decay**: Exponential decay with Box-Muller randomized rate per harmonic
-- Decay rate: `n ~ Normal(μ=10.2, σ=3.54)` seeded deterministically for repeatability
+- **Key-dependent**: Higher keys decay faster (×3.5 at C8), lower keys ring longer (×0.55 at A0), like a real piano
+- Decay rate: `n ~ Normal(μ=10.2, σ=3.54)` × key_scale, seeded deterministically for repeatability
 
 ### Output
 - Sample rate: 44,100 Hz

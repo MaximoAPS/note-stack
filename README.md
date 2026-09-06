@@ -14,6 +14,7 @@ Note Stack V1 is a Streamlit web application for composing and synthesizing pian
 - **Interactive Timeline**: Visual timeline editor for each track
 - **MIDI Import/Export**: Load MIDI files and export your compositions
 - **Demo Presets**: Includes the original "Piano Song" from Desmos
+- **🎛️ Editor Mode (NEW)**: Multi-MIDI workflow with track roles and AI generation
 
 ## Installation
 
@@ -58,6 +59,43 @@ Load MIDI files from the `demos/` folder or **upload your own** using the file u
 - Multiple channels are split into separate tracks
 - Tempo is extracted from MIDI file
 
+### Editor Mode (Phase 1)
+
+Switch to **Editor Mode** to enable the advanced multi-MIDI workflow:
+
+#### Multi-MIDI Sources
+- Upload **multiple MIDI files** as sources
+- Designate one as the **base** (primary structure source)
+- Each source preserves its original tracks separately
+
+#### Track Role Assignment
+Assign each track a role:
+- **`final`** — Goes to the composed output / Play
+- **`mashup_source`** — Used as donor material for AI track generation
+- **`ignore`** — Excluded from output
+
+#### Key Range Filtering
+- Set optional `Key Lo` and `Key Hi` filters per track
+- Only notes within the range contribute to composition
+- Useful for extracting specific ranges (e.g., bass 1-28, chords 29-52)
+
+#### AI Track Generation
+Generate new tracks using **Phase 1 heuristic patterns**:
+- **Bass Line** (keys 1-28): Extracts lowest notes from mashup sources
+- **Chord Base** (keys 29-52): Extracts note clusters/chords
+- **Adorn Pluck** (keys 45-72): Creates sparse decorative patterns
+- **Harmony Line** (keys 45-72): Harmonizes melody with interval transposition
+
+AI tracks are generated from tracks marked as `mashup_source` and automatically added to the session with `role=final`.
+
+#### Compose Final
+Press **Compose Final Song** to merge all `final` tracks into a playable song, applying:
+- Track muting
+- Key range filters
+- BPM from base source
+
+For full documentation, see `analysis/EDITOR_UX.md` (English) and `analysis/EDITOR_UX.es.md` (Spanish).
+
 ## Synthesis Model
 
 The timbre synthesis precisely matches the Desmos "Piano Song" graph with realistic key-dependent decay:
@@ -91,15 +129,22 @@ f = 2^((key - 49) / 12) × 440 Hz
 
 ```
 note-stack/
-├── app.py              # Streamlit web interface
-├── notes.py            # Data model (Note, Track, Song)
-├── synth.py            # Synthesis engine
-├── midi_io.py          # MIDI import/export
-├── check_synth.py      # Synthesis test
-├── requirements.txt    # Python dependencies
-├── demos/              # MIDI demo files
-│   ├── ATTRIBUTION.md  # MAESTRO dataset license
-│   └── .gitkeep
+├── app.py                  # Streamlit web interface
+├── notes.py                # Data model (Note, Track, Song)
+├── synth.py                # Synthesis engine
+├── midi_io.py              # MIDI import/export
+├── editor_session.py       # Editor session model (multi-MIDI workflow)
+├── track_helpers.py        # Track manipulation utilities
+├── pattern_generators.py   # AI track generation heuristics
+├── check_synth.py          # Synthesis test
+├── test_editor_session.py  # Editor session smoke tests
+├── requirements.txt        # Python dependencies
+├── demos/                  # MIDI demo files
+│   ├── ATTRIBUTION.md      # MAESTRO dataset license
+│   └── *.mid
+├── analysis/               # Design documentation
+│   ├── EDITOR_UX.md        # Editor UX vision (English)
+│   └── EDITOR_UX.es.md     # Editor UX vision (Spanish)
 └── README.md
 ```
 
@@ -112,6 +157,14 @@ python check_synth.py
 ```
 
 This renders the Piano Song melody track and verifies output duration.
+
+Test the editor session:
+
+```bash
+python test_editor_session.py
+```
+
+This runs smoke tests for multi-MIDI session management, track role assignment, and key range filtering.
 
 ## Credits
 

@@ -37,13 +37,60 @@ En el **Tracks Studio**, cada pista tiene botones de **AI Fill Track** para gene
 
 ### 3. Editar Notas
 
-Cada pista tiene una **tabla interactiva de edición de notas**:
+Cada pista ahora tiene un **Editor de Badges de Clusters** que muestra las notas como badges horizontales:
+
+#### Editor de Badges de Clusters
+
+El editor de badges organiza las notas en **clusters** (grupos de teclas simultáneas) con chips de duración:
+
+- Cada **badge** = un cluster: teclas simultáneas + duración (1/4, 1/2, 1, 2... beats)
+- **Editar teclas**: Cambia los números directamente en el badge (separadas por comas)
+- **Cambiar duración**: Usa el desplegable para seleccionar fracciones comunes
+- **Insertar cluster**: Haz clic en ➕ para insertar un nuevo cluster antes del actual
+- **Eliminar cluster**: Haz clic en 🗑️ para eliminar
+- **Aplicar cambios**: Haz clic en "✅ Apply Changes" para actualizar las notas
+
+**Pegar Cadenas de Clusters:**
+
+Puedes pegar secuencias de clusters directamente usando esta sintaxis:
+
+**Sintaxis:**
+- Guión (`-`) separa clusters secuenciales
+- Coma (`,`) separa teclas dentro de un cluster (notas simultáneas)
+- Ejemplo: `35-35,36-38-35` crea cuatro clusters:
+  1. Tecla 35
+  2. Teclas 35 y 36 juntas (acorde)
+  3. Tecla 38
+  4. Tecla 35
+- Duración predeterminada: 1/2 beat (personalizable antes de pegar)
+
+**Pasos para pegar:**
+1. Escribe o pega la cadena de clusters (ej. `35-35,36-38-35`)
+2. Selecciona la duración predeterminada (1/4, 1/2, 1, 2 beats)
+3. Haz clic en "📥 Paste"
+4. Los clusters se añaden al final de la pista
+
+**Ejemplo de flujo de trabajo:**
+```
+35-35,36-38-35
+```
+Con duración 1/2 genera:
+- Beat 0.0: [35]
+- Beat 0.5: [35, 36]
+- Beat 1.0: [38]
+- Beat 1.5: [35]
+
+#### Editor de Tabla Avanzada
+
+La **tabla de datos interactiva** tradicional sigue disponible en un expansor "🔧 Advanced Table Editor":
 
 - **Añadir filas**: Haz clic en la última fila vacía
 - **Editar valores**: Cambia Key (tecla), Start Beat (inicio), Duration (duración), Velocity (velocidad)
 - **Eliminar filas**: Selecciona y elimina
 - **Eliminar rango de beats**: Introduce "4-8" y haz clic en "🗑️ Delete Range"
-- **Aplicar cambios**: Haz clic en "✅ Apply Edits"
+- **Aplicar cambios**: Haz clic en "✅ Apply Table"
+
+Usa el editor de badges para flujo rápido y el editor de tabla para control preciso de timing y velocity.
 
 ### 4. Configurar FX por Pista
 

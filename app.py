@@ -8,12 +8,128 @@ import io
 import pandas as pd
 import altair as alt
 import tempfile
+from typing import List, Tuple, Dict
+from dataclasses import dataclass
+from collections import defaultdict
 
 from notes import Song, Track, Note
 from synth import synthesize_song, export_wav
 from midi_io import load_midi, export_midi
 from number_melody import generate_number_melody, SCALE_MODES
 from pattern_generators import PATTERN_GENERATORS
+
+
+# ========== CLUSTER BADGE HELPERS ==========
+
+@dataclass
+class NoteCluster:
+    """A cluster of simultaneous notes with a duration."""
+    start_beat: float
+    duration_beats: float
+    keys: List[int]
+    velocity: int = 100
+
+
+def notes_to_clusters(notes: List[Note]) -> List[NoteCluster]:
+    """Group notes by start_beat into clusters."""
+    if not notes:
+        return []
+    
+    # Group by start_beat
+    groups = defaultdict(list)
+    for note in notes:
+        groups[note.start_beat].append(note)
+    
+    # Create clusters
+    clusters = []
+    for start_beat in sorted(groups.keys()):
+        group_notes = groups[start_beat]
+        # Use the most common duration in the cluster
+        durations = [n.duration_beats for n in group_notes]
+        duration = max(set(durations), key=durations.count)
+        # Collect all keys
+        keys = [n.key for n in group_notes]
+        # Use first velocity
+        velocity = group_notes[0].velocity
+        clusters.append(NoteCluster(start_beat, duration, keys, velocity))
+    
+    return clusters
+
+
+def clusters_to_notes(clusters: List[NoteCluster]) -> List[Note]:
+    """Convert clusters back to individual notes."""
+    notes = []
+    for cluster in clusters:
+        for key in cluster.keys:
+            notes.append(Note(
+                key=key,
+                start_beat=cluster.start_beat,
+                duration_beats=cluster.duration_beats,
+                velocity=cluster.velocity
+            ))
+    return notes
+
+
+def parse_cluster_string(cluster_str: str, default_duration: float = 0.5) -> List[NoteCluster]:
+    """Parse cluster string like '35-35,36-38-35' into clusters.
+    
+    Syntax:
+    - Dash (-) separates clusters
+    - Comma (,) separates keys within a cluster
+    - Each cluster gets default_duration beats
+    
+    Example: '35-35,36-38-35' creates:
+    1. [35] at beat 0.0
+    2. [35,36] at beat 0.5
+    3. [38] at beat 1.0
+    4. [35] at beat 1.5
+    """
+    clusters = []
+    current_beat = 0.0
+    
+    parts = cluster_str.strip().split('-')
+    for part in parts:
+        if not part.strip():
+            continue
+        
+        # Parse keys in this cluster (comma-separated)
+        key_strs = part.split(',')
+        keys = []
+        for k in key_strs:
+            try:
+                keys.append(int(k.strip()))
+            except ValueError:
+                continue
+        
+        if keys:
+            clusters.append(NoteCluster(
+                start_beat=current_beat,
+                duration_beats=default_duration,
+                keys=keys,
+                velocity=100
+            ))
+            current_beat += default_duration
+    
+    return clusters
+
+
+def format_duration_label(duration: float) -> str:
+    """Format duration as fraction like '1/4', '1/2', '1', '2'."""
+    if duration >= 1.0:
+        if duration == int(duration):
+            return str(int(duration))
+        else:
+            return f"{duration:.2f}"
+    else:
+        # Try common fractions
+        if abs(duration - 0.25) < 0.01:
+            return "1/4"
+        elif abs(duration - 0.5) < 0.01:
+            return "1/2"
+        elif abs(duration - 0.75) < 0.01:
+            return "3/4"
+        else:
+            return f"{duration:.2f}"
 
 
 def create_piano_song_preset() -> Song:
@@ -556,137 +672,258 @@ def main():
                 # Timeline chart
                 render_timeline_chart(track, st.session_state.song.bpm)
                 
-                # Notes editor with data_editor
-                st.write("**📝 Edit Notes**")
+                # ========== CLUSTER BADGE EDITOR ==========
+                st.write("**📝 Edit Notes: Cluster Badges**")
                 
-                if track.notes:
-                    notes_data = []
-                    for i, note in enumerate(track.notes):
-                        notes_data.append({
-                            'Index': i,
-                            'Key': note.key,
-                            'Start Beat': round(note.start_beat, 2),
-                            'Duration': round(note.duration_beats, 2),
-                            'Velocity': note.velocity
-                        })
-                    
-                    df = pd.DataFrame(notes_data)
-                    
-                    # Editable table
-                    edited_df = st.data_editor(
-                        df,
-                        use_container_width=True,
-                        hide_index=True,
-                        num_rows="dynamic",  # Allow adding/deleting rows
-                        column_config={
-                            "Index": st.column_config.NumberColumn("Index", disabled=True),
-                            "Key": st.column_config.NumberColumn(
-                                "Piano Key",
-                                min_value=1,
-                                max_value=88,
-                                step=1,
-                                required=True
-                            ),
-                            "Start Beat": st.column_config.NumberColumn(
-                                "Start Beat",
-                                min_value=0.0,
-                                step=0.25,
-                                required=True
-                            ),
-                            "Duration": st.column_config.NumberColumn(
-                                "Duration (beats)",
-                                min_value=0.25,
-                                step=0.25,
-                                required=True
-                            ),
-                            "Velocity": st.column_config.NumberColumn(
-                                "Velocity",
-                                min_value=1,
-                                max_value=127,
-                                step=1,
-                                required=True
-                            )
-                        },
-                        key=f"notes_editor_{track_idx}"
+                # Paste/Import cluster string
+                st.write("**Paste Cluster String**")
+                col1, col2, col3 = st.columns([3, 1, 1])
+                
+                with col1:
+                    cluster_input = st.text_input(
+                        "Cluster string (e.g., 35-35,36-38-35)",
+                        key=f"cluster_input_{track_idx}",
+                        placeholder="35-35,36-38-35",
+                        help="Syntax: dash (-) separates clusters, comma (,) separates keys within a cluster"
                     )
+                
+                with col2:
+                    default_duration = st.selectbox(
+                        "Default duration",
+                        options=[0.25, 0.5, 0.75, 1.0, 2.0],
+                        index=1,  # 0.5 default
+                        format_func=format_duration_label,
+                        key=f"default_dur_{track_idx}"
+                    )
+                
+                with col3:
+                    if st.button("📥 Paste", key=f"paste_cluster_{track_idx}"):
+                        if cluster_input.strip():
+                            try:
+                                new_clusters = parse_cluster_string(cluster_input, default_duration)
+                                if new_clusters:
+                                    # Append to existing notes
+                                    existing_clusters = notes_to_clusters(track.notes)
+                                    
+                                    # Offset new clusters to start after existing
+                                    if existing_clusters:
+                                        last_end = max(c.start_beat + c.duration_beats for c in existing_clusters)
+                                        for nc in new_clusters:
+                                            nc.start_beat += last_end
+                                    
+                                    all_clusters = existing_clusters + new_clusters
+                                    track.notes = clusters_to_notes(all_clusters)
+                                    st.success(f"✓ Pasted {len(new_clusters)} clusters")
+                                    st.rerun()
+                                else:
+                                    st.error("No valid clusters found")
+                            except Exception as e:
+                                st.error(f"Error parsing: {str(e)}")
+                        else:
+                            st.warning("Enter a cluster string")
+                
+                st.caption("**Syntax:** `35-35,36-38-35` → [35] then [35,36] then [38] then [35], each " + format_duration_label(default_duration) + " beat(s)")
+                
+                st.write("---")
+                
+                # Display clusters as badges
+                if track.notes:
+                    clusters = notes_to_clusters(track.notes)
                     
-                    # Apply button
-                    col1, col2, col3 = st.columns([1, 1, 2])
+                    # Initialize session state for cluster edits
+                    if f"clusters_{track_idx}" not in st.session_state:
+                        st.session_state[f"clusters_{track_idx}"] = clusters
                     
-                    with col1:
-                        if st.button("✅ Apply Edits", key=f"apply_{track_idx}",
-                                   type="primary"):
-                            # Rebuild notes from edited_df
-                            new_notes = []
-                            for _, row in edited_df.iterrows():
-                                if pd.notna(row['Key']) and pd.notna(row['Start Beat']) and pd.notna(row['Duration']):
-                                    new_notes.append(Note(
-                                        key=int(row['Key']),
-                                        start_beat=float(row['Start Beat']),
-                                        duration_beats=float(row['Duration']),
-                                        velocity=int(row['Velocity'])
-                                    ))
+                    st.write(f"**Cluster Badges** ({len(clusters)} clusters, {len(track.notes)} notes)")
+                    
+                    # Display and edit each cluster
+                    for cluster_idx, cluster in enumerate(st.session_state[f"clusters_{track_idx}"]):
+                        cols = st.columns([3, 1, 1, 1, 1])
+                        
+                        with cols[0]:
+                            # Display keys as comma-separated
+                            keys_str = ",".join(map(str, cluster.keys))
+                            new_keys_str = st.text_input(
+                                f"Cluster {cluster_idx}",
+                                value=keys_str,
+                                key=f"cluster_keys_{track_idx}_{cluster_idx}",
+                                label_visibility="collapsed"
+                            )
                             
-                            track.notes = new_notes
-                            st.success(f"✓ Applied edits: {len(new_notes)} notes")
+                            # Parse keys on change
+                            try:
+                                new_keys = [int(k.strip()) for k in new_keys_str.split(',') if k.strip()]
+                                st.session_state[f"clusters_{track_idx}"][cluster_idx].keys = new_keys
+                            except:
+                                pass
+                        
+                        with cols[1]:
+                            # Duration selector
+                            duration_options = [0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0]
+                            try:
+                                current_idx = duration_options.index(cluster.duration_beats)
+                            except ValueError:
+                                duration_options.append(cluster.duration_beats)
+                                duration_options.sort()
+                                current_idx = duration_options.index(cluster.duration_beats)
+                            
+                            new_duration = st.selectbox(
+                                "Duration",
+                                options=duration_options,
+                                index=current_idx,
+                                format_func=format_duration_label,
+                                key=f"cluster_dur_{track_idx}_{cluster_idx}",
+                                label_visibility="collapsed"
+                            )
+                            st.session_state[f"clusters_{track_idx}"][cluster_idx].duration_beats = new_duration
+                        
+                        with cols[2]:
+                            # Insert button
+                            if st.button("➕", key=f"insert_{track_idx}_{cluster_idx}",
+                                       help="Insert cluster before this one"):
+                                new_cluster = NoteCluster(
+                                    start_beat=cluster.start_beat,
+                                    duration_beats=0.5,
+                                    keys=[49],
+                                    velocity=100
+                                )
+                                st.session_state[f"clusters_{track_idx}"].insert(cluster_idx, new_cluster)
+                                st.rerun()
+                        
+                        with cols[3]:
+                            # Delete button
+                            if st.button("🗑️", key=f"delete_{track_idx}_{cluster_idx}",
+                                       help="Delete this cluster"):
+                                st.session_state[f"clusters_{track_idx}"].pop(cluster_idx)
+                                st.rerun()
+                        
+                        with cols[4]:
+                            # Display beat position
+                            st.caption(f"@{cluster.start_beat:.1f}")
+                    
+                    st.write("---")
+                    
+                    # Apply clusters button
+                    col1, col2 = st.columns([1, 3])
+                    with col1:
+                        if st.button("✅ Apply Changes", key=f"apply_clusters_{track_idx}",
+                                   type="primary"):
+                            # Reassign start_beats sequentially
+                            current_beat = 0.0
+                            for c in st.session_state[f"clusters_{track_idx}"]:
+                                c.start_beat = current_beat
+                                current_beat += c.duration_beats
+                            
+                            # Convert to notes
+                            track.notes = clusters_to_notes(st.session_state[f"clusters_{track_idx}"])
+                            
+                            # Clear session state to refresh
+                            del st.session_state[f"clusters_{track_idx}"]
+                            
+                            st.success(f"✓ Applied {len(track.notes)} notes")
                             st.rerun()
                     
                     with col2:
-                        # Delete range
-                        beat_range = st.text_input(
-                            "Delete beats (e.g., 4-8)",
-                            key=f"del_range_{track_idx}",
-                            placeholder="4-8"
+                        if st.button("🔄 Refresh from Track", key=f"refresh_clusters_{track_idx}"):
+                            st.session_state[f"clusters_{track_idx}"] = notes_to_clusters(track.notes)
+                            st.rerun()
+                    
+                    # Advanced table editor (collapsed)
+                    with st.expander("🔧 Advanced Table Editor", expanded=False):
+                        notes_data = []
+                        for i, note in enumerate(track.notes):
+                            notes_data.append({
+                                'Index': i,
+                                'Key': note.key,
+                                'Start Beat': round(note.start_beat, 2),
+                                'Duration': round(note.duration_beats, 2),
+                                'Velocity': note.velocity
+                            })
+                        
+                        df = pd.DataFrame(notes_data)
+                        
+                        edited_df = st.data_editor(
+                            df,
+                            use_container_width=True,
+                            hide_index=True,
+                            num_rows="dynamic",
+                            column_config={
+                                "Index": st.column_config.NumberColumn("Index", disabled=True),
+                                "Key": st.column_config.NumberColumn(
+                                    "Piano Key",
+                                    min_value=1,
+                                    max_value=88,
+                                    step=1,
+                                    required=True
+                                ),
+                                "Start Beat": st.column_config.NumberColumn(
+                                    "Start Beat",
+                                    min_value=0.0,
+                                    step=0.25,
+                                    required=True
+                                ),
+                                "Duration": st.column_config.NumberColumn(
+                                    "Duration (beats)",
+                                    min_value=0.25,
+                                    step=0.25,
+                                    required=True
+                                ),
+                                "Velocity": st.column_config.NumberColumn(
+                                    "Velocity",
+                                    min_value=1,
+                                    max_value=127,
+                                    step=1,
+                                    required=True
+                                )
+                            },
+                            key=f"notes_table_{track_idx}"
                         )
                         
-                        if st.button("🗑️ Delete Range", key=f"del_range_btn_{track_idx}"):
-                            try:
-                                if "-" in beat_range:
-                                    start_beat, end_beat = map(float, beat_range.split("-"))
-                                    original_count = len(track.notes)
-                                    track.notes = [n for n in track.notes 
-                                                 if not (start_beat <= n.start_beat < end_beat)]
-                                    deleted = original_count - len(track.notes)
-                                    st.success(f"✓ Deleted {deleted} notes in range {start_beat}-{end_beat}")
-                                    st.rerun()
-                            except Exception as e:
-                                st.error(f"Invalid range format: {str(e)}")
-                    
-                    with col3:
-                        st.caption(f"Total: {len(track.notes)} notes")
+                        col1, col2, col3 = st.columns([1, 1, 2])
+                        
+                        with col1:
+                            if st.button("✅ Apply Table", key=f"apply_table_{track_idx}"):
+                                new_notes = []
+                                for _, row in edited_df.iterrows():
+                                    if pd.notna(row['Key']) and pd.notna(row['Start Beat']) and pd.notna(row['Duration']):
+                                        new_notes.append(Note(
+                                            key=int(row['Key']),
+                                            start_beat=float(row['Start Beat']),
+                                            duration_beats=float(row['Duration']),
+                                            velocity=int(row['Velocity'])
+                                        ))
+                                
+                                track.notes = new_notes
+                                if f"clusters_{track_idx}" in st.session_state:
+                                    del st.session_state[f"clusters_{track_idx}"]
+                                st.success(f"✓ Applied table: {len(new_notes)} notes")
+                                st.rerun()
+                        
+                        with col2:
+                            beat_range = st.text_input(
+                                "Delete beats (e.g., 4-8)",
+                                key=f"del_range_{track_idx}",
+                                placeholder="4-8"
+                            )
+                            
+                            if st.button("🗑️ Delete Range", key=f"del_range_btn_{track_idx}"):
+                                try:
+                                    if "-" in beat_range:
+                                        start_beat, end_beat = map(float, beat_range.split("-"))
+                                        original_count = len(track.notes)
+                                        track.notes = [n for n in track.notes 
+                                                     if not (start_beat <= n.start_beat < end_beat)]
+                                        deleted = original_count - len(track.notes)
+                                        if f"clusters_{track_idx}" in st.session_state:
+                                            del st.session_state[f"clusters_{track_idx}"]
+                                        st.success(f"✓ Deleted {deleted} notes in range {start_beat}-{end_beat}")
+                                        st.rerun()
+                                except Exception as e:
+                                    st.error(f"Invalid range format: {str(e)}")
                 
                 else:
-                    st.write("No notes in this track. Generate AI fill or add notes manually.")
-                    
-                    # Add note manually
-                    st.write("**Add Note**")
-                    col1, col2, col3, col4, col5 = st.columns([2, 2, 2, 2, 1])
-                    
-                    with col1:
-                        new_key = st.number_input("Key", 1, 88, 49, 1,
-                                                 key=f"new_key_{track_idx}")
-                    
-                    with col2:
-                        new_start = st.number_input("Start", 0.0, 1000.0, 0.0, 0.25,
-                                                   key=f"new_start_{track_idx}")
-                    
-                    with col3:
-                        new_duration = st.number_input("Duration", 0.25, 100.0, 1.0, 0.25,
-                                                      key=f"new_duration_{track_idx}")
-                    
-                    with col4:
-                        new_velocity = st.number_input("Velocity", 1, 127, 100, 1,
-                                                      key=f"new_velocity_{track_idx}")
-                    
-                    with col5:
-                        if st.button("➕", key=f"add_note_{track_idx}"):
-                            track.notes.append(Note(
-                                key=new_key,
-                                start_beat=new_start,
-                                duration_beats=new_duration,
-                                velocity=new_velocity
-                            ))
-                            st.rerun()
+                    st.write("No notes in this track yet.")
+                    st.caption("Use 'Paste Cluster String' above or 'AI Fill Track' buttons to add notes.")
     
     st.divider()
     

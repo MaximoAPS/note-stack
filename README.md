@@ -31,7 +31,9 @@ The **Studio UI** provides an end-to-end workflow for creating expressive piano 
    - **Track roles**: Mark tracks as Solo (melody), Base (bass/chords), or Adorn (decoration)
    - **AI Fill Track** buttons: Generate Bass Line (keys 1-28), Chord Base (keys 29-52), Adorn Pluck, or Harmony Line from existing tracks
    - **Per-track FX**: Intensity (harmonic multiplier), Delay (30/160s echo), Hold (sustain duration)
-   - **Edit notes**: Interactive data editor with add/delete rows, beat-range delete
+   - **Cluster Badge Editor**: Edit notes as horizontal badges showing simultaneous keys + duration chips
+   - **Paste cluster strings**: Import note sequences like `35-35,36-38-35` (dash separates clusters, comma separates keys)
+   - **Advanced table editor**: Full data table available in expander for precise edits
    - **Mute/solo**: Isolate tracks during composition
 
 3. **One-Click Play** — Synthesize and download WAV/MIDI instantly
@@ -94,10 +96,33 @@ The app will open in your browser at `http://localhost:8501`.
 
 1. **Generate a Number Melody**: Paste Pi digits, select 3 style MIDIs, click "Generate"
 2. **Add AI tracks**: Open the generated Solo track, click "Bass Line" or "Chord Base"
-3. **Edit notes**: Use the interactive table to fine-tune individual notes
+3. **Edit notes**: Use cluster badges to edit keys and durations, or paste cluster strings
 4. **Adjust FX**: Set intensity (1.0-2.0), enable delay, adjust hold duration
 5. Click "▶ Play" to synthesize and hear the music
 6. Download as WAV or MIDI
+
+### Cluster Badge Editor
+
+The **Cluster Badge Editor** provides an intuitive way to edit notes as time-slot clusters:
+
+- Each **badge** represents simultaneous keys (chord or single note) + a duration chip (1/4, 1/2, 1, 2... beats)
+- **Edit keys** directly in the badge text (comma-separated)
+- **Change duration** via dropdown (common fractions displayed as 1/4, 1/2, etc.)
+- **Insert** new clusters between existing ones with the ➕ button
+- **Delete** clusters with the 🗑️ button
+- **Paste cluster strings** for quick entry: `35-35,36-38-35`
+
+**Paste Syntax:**
+- Dash (`-`) separates sequential clusters
+- Comma (`,`) separates keys within a cluster (simultaneous notes)
+- Example: `35-35,36-38-35` creates four clusters:
+  1. Key 35
+  2. Keys 35 and 36 together
+  3. Key 38
+  4. Key 35
+- Default duration: 1/2 beat (customizable before paste)
+
+**Advanced Table Editor** is still available in an expander for precise timing and velocity control.
 
 ### Creating Music
 

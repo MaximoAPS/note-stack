@@ -150,7 +150,7 @@ def main():
     # ========== NUMBER MELODY PANEL (PROMINENT) ==========
     st.subheader("🔢 Number Melody — Transform digits into music")
     st.caption("Paste Pi, Fibonacci, dates → Generate melody with durations learned from style MIDIs • "
-              "**pair_mod chunking** for rich variation • Multi-style training")
+              "**pair_mod chunking** for rich variation • **jump_predict** for octave disambiguation • Multi-style training")
     
     col1, col2, col3 = st.columns([2, 1, 1])
     
@@ -195,7 +195,7 @@ def main():
         )
     
     # Chunking and mapping
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
         chunk_mode = st.radio(
@@ -215,21 +215,41 @@ def main():
         )
     
     with col3:
-        octave_range = st.number_input(
-            "Octaves / Octavas",
-            min_value=1,
-            max_value=4,
-            value=2,
-            help="How many octaves to span"
+        register_mode = st.radio(
+            "Register / Registro",
+            options=["basic", "jump_predict"],
+            index=0,
+            help="basic: original | jump_predict: octave disambiguation"
         )
     
-    with col4:
+    # Range and octave controls
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        min_key = st.number_input(
+            "Min Key",
+            min_value=1,
+            max_value=88,
+            value=28,
+            help="Lowest note allowed (28 = E1)"
+        )
+    
+    with col2:
         max_key = st.number_input(
             "Max Key",
             min_value=1,
             max_value=88,
             value=64,
-            help="Cap highest note (64 = comfortable)"
+            help="Highest note allowed (64 = E4)"
+        )
+    
+    with col3:
+        octave_range = st.number_input(
+            "Octaves / Octavas",
+            min_value=1,
+            max_value=4,
+            value=2,
+            help="How many octaves to span (basic mode)"
         )
     
     # Style sources
@@ -289,7 +309,9 @@ def main():
                         octave_range=octave_range,
                         chunk_mode=chunk_mode,
                         modulus=modulus,
+                        min_key=min_key,
                         max_key=max_key,
+                        register_mode=register_mode,
                         duration_strategy=duration_strategy
                     )
                 

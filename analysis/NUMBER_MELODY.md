@@ -56,10 +56,11 @@ Mod 12:   7      5     11      2      5     10
 
 **Register Control**:
 - `max_key` parameter caps highest note (default: ~64 for comfortable listening)
-- `octave_range` controls vertical span
+- `min_key` parameter sets lowest note (default: tonic)
+- `octave_range` controls vertical span (basic mode)
 - Prevents occasional "bursts" of very high notes
 
-**Mapping logic (pair_mod + modulus=12)**:
+**Mapping logic (basic mode, pair_mod + modulus=12)**:
 ```python
 # For each digit pair 00-99:
 pair_value = digit1 * 10 + digit2
@@ -68,6 +69,69 @@ octave_offset = (chromatic_offset // 12) % octave_range
 key = tonic + chromatic_offset + octave_offset * 12
 key = min(key, max_key)  # Clamp to comfortable register
 ```
+
+#### Jump Prediction Register Mode (Phase 2.0)
+
+**Problem**: The basic mapping algorithm sometimes limits octave spanning because the octave is determined mechanically. For example, with modulus=12, all values 0-11 map to one octave, 12-23 to another, etc. This can prevent the melody from using the full [min_key, max_key] range in a musically natural way.
+
+**Solution**: `jump_predict` register mode uses **octave disambiguation via jump likelihood**.
+
+**How it works**:
+1. **Digits → Pitch Classes**: Same as basic mode (pair_mod % 12 → PC 0-11)
+2. **Find Candidates**: For each target pitch class, find ALL keys in [min_key, max_key] with that PC
+3. **Pick Best Jump**: Use a jump histogram learned from style MIDIs to pick the jump with highest likelihood
+4. **Duration Model**: Unchanged, still learned from style MIDIs
+
+**Example — PC 3 to PC 7**:
+```
+Previous key: 40 (E)
+Target pitch class: 7 (G)
+Candidates in [28, 64]: 31 (G, jump=-9), 43 (G, jump=+3), 55 (G, jump=+15)
+
+If style MIDIs prefer small intervals:
+  → Pick 43 (jump=+3)
+
+If style MIDIs prefer downward leaps:
+  → Pick 31 (jump=-9)
+
+If style MIDIs prefer large upward intervals:
+  → Pick 55 (jump=+15)
+```
+
+**When to use**:
+- Multi-style training with diverse classical MIDIs (Chopin, Liszt, Scarlatti)
+- Want melody to span multiple octaves based on style's natural melodic motion
+- Working with wide [min_key, max_key] range (e.g. 28-64, spanning 3 octaves)
+
+**CLI Usage**:
+```bash
+python number_melody.py \
+  --digits 314159265358979323846 \
+  --tonic 40 \
+  --chunk pair_mod \
+  --modulus 12 \
+  --register jump_predict \
+  --min-key 28 \
+  --max-key 64 \
+  --style demos/chopin-etude.mid \
+  --style demos/liszt-preludio.mid \
+  --style demos/scarlatti-sonata.mid \
+  --out pi_jump_predict.mid \
+  --bpm 96
+```
+
+**Studio UI**:
+1. Select "Register / Registro": **jump_predict**
+2. Set Min Key: **28** (E1, bass range start)
+3. Set Max Key: **64** (E4, comfortable treble)
+4. Select multiple style MIDIs for rich jump statistics
+5. Generate — melody will span multiple octaves based on learned jump preferences
+
+**Technical Details**:
+- Jump model: `Dict[int, int]` mapping signed jump (semitones) to count
+- Clamped to ±24 semitones (±2 octaves) for melodic realism
+- Tiebreaker: Prefer smaller absolute jumps for equal counts (more melodic)
+- First note: Always uses tonic
 
 ---
 
@@ -179,6 +243,10 @@ def generate_number_melody(
     octave_range: int = 2,
     chunk_mode: str = "pair_mod",
     modulus: int = 12,
+    min_key: Optional[int] = None,
+    max_key: Optional[int] = None,
+    register_mode: str = "basic",
+    modulus: int = 12,
     max_key: Optional[int] = None,
     duration_strategy: Literal["mode", "median", "random"] = "mode"
 ) -> Track:
@@ -227,7 +295,24 @@ python3 number_melody.py \
   --bpm 90
 ```
 
-**Expected**: MIDI files with melodies having varied durations learned from style patterns.
+**Jump prediction mode (octave disambiguation)**:
+```bash
+python3 number_melody.py \
+  --digits 314159265358979323846 \
+  --tonic 40 \
+  --chunk pair_mod \
+  --modulus 12 \
+  --register jump_predict \
+  --min-key 28 \
+  --max-key 64 \
+  --style demos/chopin-etude.mid \
+  --style demos/liszt-preludio.mid \
+  --style demos/scarlatti-sonata.mid \
+  --out /tmp/pi_jump_predict.mid \
+  --bpm 96
+```
+
+**Expected**: MIDI files with melodies having varied durations learned from style patterns. Jump prediction mode should produce melodies that span multiple octaves within [min_key, max_key] based on the style's natural melodic motion.
 
 ---
 
@@ -239,10 +324,12 @@ Add panel in `app.py`:
 - Text area: Paste digit string
 - **Chunk mode selector**: pair_mod (default) or single
 - **Modulus input**: 12 (chromatic), 7 (diatonic), 5 (pentatonic)
+- **Register mode selector**: basic (original) or jump_predict (octave disambiguation)
 - Number input: Tonic (1-88, default 40 for lower register)
 - Dropdown: Mode (major, minor, pentatonic_major, pentatonic_minor, chromatic)
-- Number input: Octave range (1-4, default 2)
+- **Number input: Min key (default 28 for bass range start)**
 - **Number input: Max key (default 64 for comfortable register)**
+- Number input: Octave range (1-4, default 2, used in basic mode)
 - **Multi-select: Style MIDI demos (select multiple for richer patterns)**
 - Radio: Duration strategy (mode, median, random)
 - **Number input: BPM override (default 96 for calmer tempo)**
@@ -250,7 +337,7 @@ Add panel in `app.py`:
 
 **On Generate**:
 - Load multiple style MIDIs and merge all tracks
-- Call `generate_number_melody(chunk_mode="pair_mod", modulus=12, ...)`
+- Call `generate_number_melody(chunk_mode="pair_mod", modulus=12, register_mode=..., min_key=..., max_key=..., ...)`
 - Add generated track to session with BPM override
 - Display key range and note count
 - Button: "Adorn this melody" (if editor_session + pattern_generators available)

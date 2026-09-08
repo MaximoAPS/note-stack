@@ -37,7 +37,68 @@ octave_offset = (digit // len(scale_degrees)) % octave_range
 key = tonic + pitch_class + octave_offset * 12
 ```
 
-**Mapas personalizados** (Fase 2): Usuario puede definir mapeos dígito→tecla arbitrarios.
+#### Modo de Registro jump_predict (Fase 2.0)
+
+**Problema**: El algoritmo de mapeo básico a veces limita el rango de octavas porque la octava se determina mecánicamente. Por ejemplo, con módulo=12, todos los valores 0-11 mapean a una octava, 12-23 a otra, etc. Esto puede evitar que la melodía use el rango completo [min_key, max_key] de manera musicalmente natural.
+
+**Solución**: El modo de registro `jump_predict` usa **desambiguación de octava vía probabilidad de salto**.
+
+**Cómo funciona**:
+1. **Dígitos → Clases de Tono**: Igual que modo básico (pair_mod % 12 → PC 0-11)
+2. **Encontrar Candidatos**: Para cada clase de tono objetivo, encontrar TODAS las teclas en [min_key, max_key] con esa PC
+3. **Elegir Mejor Salto**: Usar histograma de saltos aprendido de MIDIs de estilo para elegir el salto con mayor probabilidad
+4. **Modelo de Duración**: Sin cambios, todavía aprendido de MIDIs de estilo
+
+**Ejemplo — PC 3 a PC 7**:
+```
+Tecla anterior: 40 (Mi)
+Clase de tono objetivo: 7 (Sol)
+Candidatos en [28, 64]: 31 (Sol, salto=-9), 43 (Sol, salto=+3), 55 (Sol, salto=+15)
+
+Si los MIDIs de estilo prefieren intervalos pequeños:
+  → Elige 43 (salto=+3)
+
+Si los MIDIs de estilo prefieren saltos descendentes:
+  → Elige 31 (salto=-9)
+
+Si los MIDIs de estilo prefieren intervalos ascendentes grandes:
+  → Elige 55 (salto=+15)
+```
+
+**Cuándo usar**:
+- Entrenamiento multi-estilo con MIDIs clásicos diversos (Chopin, Liszt, Scarlatti)
+- Quieres que la melodía abarque múltiples octavas basadas en el movimiento melódico natural del estilo
+- Trabajando con rango amplio [min_key, max_key] (ej. 28-64, abarcando 3 octavas)
+
+**Uso CLI**:
+```bash
+python number_melody.py \
+  --digits 314159265358979323846 \
+  --tonic 40 \
+  --chunk pair_mod \
+  --modulus 12 \
+  --register jump_predict \
+  --min-key 28 \
+  --max-key 64 \
+  --style demos/chopin-etude.mid \
+  --style demos/liszt-preludio.mid \
+  --style demos/scarlatti-sonata.mid \
+  --out pi_jump_predict.mid \
+  --bpm 96
+```
+
+**UI de Studio**:
+1. Selecciona "Register / Registro": **jump_predict**
+2. Establece Min Key: **28** (Mi1, inicio rango bajo)
+3. Establece Max Key: **64** (Mi4, agudo cómodo)
+4. Selecciona múltiples MIDIs de estilo para estadísticas de salto ricas
+5. Generar — la melodía abarcará múltiples octavas basadas en preferencias de salto aprendidas
+
+**Detalles Técnicos**:
+- Modelo de salto: `Dict[int, int]` mapea salto con signo (semitonos) a contador
+- Limitado a ±24 semitonos (±2 octavas) para realismo melódico
+- Desempate: Prefiere saltos absolutos más pequeños para conteos iguales (más melódico)
+- Primera nota: Siempre usa tónica
 
 ---
 
@@ -173,17 +234,38 @@ def generate_number_melody(
 
 ## Prueba CLI
 
+**Modo básico**:
 ```bash
 python number_melody.py \
   --digits 314159265358979323846 \
   --tonic 48 \
   --mode major \
-  --style demos/joplin-entertainer.mid \
+  --chunk pair_mod \
+  --modulus 12 \
+  --style demos/chopin-etude.mid \
+  --style demos/liszt-preludio.mid \
   --out /tmp/pi_melody.mid \
-  --bpm 120
+  --bpm 96
 ```
 
-**Esperado**: `/tmp/pi_melody.mid` contiene pista de melodía con duraciones variadas.
+**Modo jump_predict (desambiguación de octava)**:
+```bash
+python number_melody.py \
+  --digits 314159265358979323846 \
+  --tonic 40 \
+  --chunk pair_mod \
+  --modulus 12 \
+  --register jump_predict \
+  --min-key 28 \
+  --max-key 64 \
+  --style demos/chopin-etude.mid \
+  --style demos/liszt-preludio.mid \
+  --style demos/scarlatti-sonata.mid \
+  --out /tmp/pi_jump_predict.mid \
+  --bpm 96
+```
+
+**Esperado**: Archivos MIDI con melodías con duraciones variadas aprendidas de patrones de estilo. El modo jump_predict debe producir melodías que abarcan múltiples octavas dentro de [min_key, max_key] basadas en el movimiento melódico natural del estilo.
 
 ---
 
@@ -193,11 +275,17 @@ Añadir panel en `app.py`:
 
 **Sección "Number Melody"**:
 - Área de texto: Pegar cadena de dígitos
-- Entrada numérica: Tónica (1-88, default 48)
+- **Selector de modo chunk**: pair_mod (por defecto) o single
+- **Entrada módulo**: 12 (cromático), 7 (diatónico), 5 (pentatónico)
+- **Selector modo registro**: basic (original) o jump_predict (desambiguación octava)
+- Entrada numérica: Tónica (1-88, default 40)
 - Dropdown: Modo (major, minor, pentatonic_major, pentatonic_minor, chromatic)
-- Entrada numérica: Rango de octavas (1-4, default 2)
-- Cargador MIDI: MIDI(s) de estilo o dropdown de demos
+- **Entrada numérica: Min key (default 28 para inicio rango bajo)**
+- **Entrada numérica: Max key (default 64 para registro cómodo)**
+- Entrada numérica: Rango de octavas (1-4, default 2, usado en modo básico)
+- **Multi-selección: MIDIs de estilo demo (selecciona múltiples para patrones más ricos)**
 - Radio: Estrategia de duración (mode, median, random)
+- **Entrada numérica: BPM (default 96 para tempo más calmado)**
 - Botón: "Generate Melody"
 
 **Al Generar**:

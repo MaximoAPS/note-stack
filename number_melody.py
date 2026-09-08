@@ -96,7 +96,10 @@ def map_values_to_keys(
     chunk_mode: Literal["single", "pair_mod"],
     modulus: int,
     octave_range: int = 2,
-    max_key: Optional[int] = None
+    max_key: Optional[int] = None,
+    min_key: Optional[int] = None,
+    jump_model: Optional[Dict[int, int]] = None,
+    register_mode: Literal["basic", "jump_predict"] = "basic"
 ) -> List[int]:
     """
     Map chunked values to piano keys.
@@ -109,14 +112,22 @@ def map_values_to_keys(
         modulus: Modulus used in chunking (relevant for pair_mod)
         octave_range: How many octaves to span (1-4)
         max_key: Optional maximum key to clamp to (default: tonic + scale_span + 12*(octave_range-1))
+        min_key: Optional minimum key to clamp to (default: tonic)
+        jump_model: Optional jump histogram for jump_predict mode
+        register_mode: "basic" (original algorithm) or "jump_predict" (octave disambiguation)
     
     Returns:
         List of piano keys (1-88)
     
     Mapping logic:
-        - single mode: Each value 0-9 maps to scale degree, wrapping across octaves
-        - pair_mod mode with modulus=12: Each value 0-11 maps to chromatic offset from tonic
-        - pair_mod mode with other modulus: Each value maps to scale degree if modulus matches scale length
+        - basic mode (default): Original algorithm
+          - single mode: Each value 0-9 maps to scale degree, wrapping across octaves
+          - pair_mod mode with modulus=12: Each value 0-11 maps to chromatic offset from tonic
+          - pair_mod mode with other modulus: Each value maps to scale degree if modulus matches scale length
+        - jump_predict mode: Octave disambiguation via jump likelihood
+          - Requires chunk_mode="pair_mod" and modulus=12
+          - Each value is pitch class (0-11)
+          - Pick octave from [min_key, max_key] that maximizes jump likelihood
     """
     if mode not in SCALE_MODES:
         raise ValueError(f"Unknown mode: {mode}. Available: {list(SCALE_MODES.keys())}")
@@ -124,7 +135,10 @@ def map_values_to_keys(
     scale_degrees = SCALE_MODES[mode]
     keys = []
     
-    # Determine default max_key if not specified
+    # Determine default min_key and max_key if not specified
+    if min_key is None:
+        min_key = tonic
+    
     if max_key is None:
         if chunk_mode == "pair_mod" and modulus == 12:
             # Chromatic: tonic + 11 semitones + octave spans
@@ -137,6 +151,35 @@ def map_values_to_keys(
         # Hard cap at 64 (E above middle C) for comfortable listening
         max_key = min(max_key, 64)
     
+    # jump_predict mode: Use jump model for octave disambiguation
+    if register_mode == "jump_predict":
+        if chunk_mode != "pair_mod" or modulus != 12:
+            raise ValueError("jump_predict mode requires chunk_mode='pair_mod' and modulus=12")
+        
+        if jump_model is None:
+            raise ValueError("jump_predict mode requires jump_model")
+        
+        # First note: use tonic
+        prev_key = tonic
+        
+        for value in values:
+            pitch_class = value % 12
+            
+            # Predict best jump to reach this pitch class
+            key = predict_jump_for_pitch_class(
+                prev_key=prev_key,
+                target_pc=pitch_class,
+                min_key=min_key,
+                max_key=max_key,
+                jump_model=jump_model
+            )
+            
+            keys.append(key)
+            prev_key = key
+        
+        return keys
+    
+    # basic mode: Original algorithm
     for value in values:
         if chunk_mode == "pair_mod" and modulus == 12:
             # Chromatic mapping: value 0-11 maps directly to semitone offsets
@@ -247,6 +290,133 @@ def build_duration_model(
     return dict(jump_durations)
 
 
+def build_jump_model(
+    style_tracks: List[Track]
+) -> Dict[int, int]:
+    """
+    Build jump histogram from style tracks for octave disambiguation.
+    
+    For each consecutive note pair in style tracks, record the signed jump
+    (interval in semitones). This creates a statistical model of preferred
+    melodic intervals for the jump_predict register mode.
+    
+    Args:
+        style_tracks: List of tracks to learn from
+    
+    Returns:
+        Dictionary mapping jump (in semitones) to count of occurrences
+        
+    Example:
+        {
+            0: 45,   # Repeated notes: 45 times
+            1: 12,   # Half step up: 12 times
+            -1: 8,   # Half step down: 8 times
+            2: 15,   # Whole step up: 15 times
+            4: 6,    # Major third up: 6 times (e.g. PC 3→7 could be +4 or -8)
+            -8: 3,   # Major sixth down: 3 times (alternative for 3→7)
+        }
+    """
+    jump_counts: Dict[int, int] = defaultdict(int)
+    
+    for track in style_tracks:
+        if len(track.notes) < 2:
+            continue
+        
+        # Sort notes by start time
+        sorted_notes = sorted(track.notes, key=lambda n: n.start_beat)
+        
+        for i in range(1, len(sorted_notes)):
+            prev_note = sorted_notes[i - 1]
+            curr_note = sorted_notes[i]
+            
+            # Calculate signed jump (interval in semitones)
+            jump = curr_note.key - prev_note.key
+            
+            # Clamp to reasonable melodic range (-24 to +24, within 2 octaves)
+            if -24 <= jump <= 24:
+                jump_counts[jump] += 1
+    
+    return dict(jump_counts)
+
+
+def predict_jump_for_pitch_class(
+    prev_key: int,
+    target_pc: int,
+    min_key: int,
+    max_key: int,
+    jump_model: Dict[int, int]
+) -> int:
+    """
+    Predict best jump to reach target pitch class from previous key.
+    
+    Given a target pitch class (0-11) and previous key, find all candidate
+    keys in [min_key, max_key] with that pitch class, then pick the one
+    whose jump from prev_key has the highest likelihood in the jump model.
+    
+    Args:
+        prev_key: Previous piano key (1-88)
+        target_pc: Target pitch class (0-11)
+        min_key: Minimum allowed key
+        max_key: Maximum allowed key
+        jump_model: Jump histogram from build_jump_model()
+    
+    Returns:
+        Best piano key with target_pc that maximizes jump likelihood
+        
+    Example:
+        >>> # PC 7 from key 40 (E) can be 43 (+3), 55 (+15), 31 (-9), etc.
+        >>> # If jump_model prefers small intervals, picks 43 (+3)
+        >>> # If jump_model prefers -8/-9, might pick 31 (-9)
+        >>> predict_jump_for_pitch_class(40, 7, 28, 64, {3: 20, -9: 5, 15: 2})
+        43
+    """
+    # Find all candidate keys with target pitch class in [min_key, max_key]
+    candidates = []
+    
+    # Start from min_key and find first key with target PC
+    first_candidate = min_key
+    while first_candidate <= max_key:
+        if (first_candidate - 1) % 12 == target_pc:  # Piano key 1 = A (PC 9)
+            break
+        first_candidate += 1
+    
+    # Generate all candidates by adding octaves
+    key = first_candidate
+    while key <= max_key:
+        if (key - 1) % 12 == target_pc:
+            candidates.append(key)
+        key += 12
+    
+    if not candidates:
+        # Fallback: if no candidates in range, clamp to range
+        # and find closest key with target PC
+        for offset in range(-12, 13):
+            test_key = prev_key + offset
+            if min_key <= test_key <= max_key and (test_key - 1) % 12 == target_pc:
+                return test_key
+        # Ultimate fallback: clamp prev_key to range
+        return max(min_key, min(max_key, prev_key))
+    
+    # Score each candidate by jump likelihood
+    best_key = candidates[0]
+    best_score = -1
+    
+    for candidate_key in candidates:
+        jump = candidate_key - prev_key
+        score = jump_model.get(jump, 0)
+        
+        # Prefer smaller absolute jumps as tiebreaker (more melodic)
+        # Add small bonus inversely proportional to absolute jump
+        tiebreaker = 1.0 / (1.0 + abs(jump) * 0.1)
+        total_score = score + tiebreaker
+        
+        if total_score > best_score:
+            best_score = total_score
+            best_key = candidate_key
+    
+    return best_key
+
+
 def predict_durations(
     keys: List[int],
     duration_model: Dict[int, List[float]],
@@ -313,7 +483,9 @@ def generate_number_melody(
     octave_range: int = 2,
     chunk_mode: Literal["single", "pair_mod"] = "pair_mod",
     modulus: int = 12,
+    min_key: Optional[int] = None,
     max_key: Optional[int] = None,
+    register_mode: Literal["basic", "jump_predict"] = "basic",
     duration_strategy: Literal["mode", "median", "random"] = "mode",
     intensity: float = 1.0,
     hold_seconds: float = 0.8,
@@ -331,7 +503,9 @@ def generate_number_melody(
         octave_range: How many octaves to span (1-4)
         chunk_mode: "single" (one digit → scale degree) or "pair_mod" (digit pairs % modulus)
         modulus: For pair_mod, modulus to apply (12=chromatic, 7=diatonic, 5=pentatonic)
+        min_key: Optional minimum key to clamp to (default: tonic)
         max_key: Optional maximum key to clamp to (default: comfortable register ~64)
+        register_mode: "basic" (original) or "jump_predict" (octave disambiguation via jump model)
         duration_strategy: How to pick duration from histogram (mode/median/random)
         intensity: Track intensity parameter (default 1.0)
         hold_seconds: Track hold parameter (default 0.8)
@@ -373,7 +547,12 @@ def generate_number_melody(
     # 2. Chunk digits
     values = chunk_digits(digits, chunk_mode, modulus)
     
-    # 3. Map values to keys
+    # 3. Build jump model if using jump_predict mode
+    jump_model = None
+    if register_mode == "jump_predict":
+        jump_model = build_jump_model(style_tracks)
+    
+    # 4. Map values to keys
     keys = map_values_to_keys(
         values=values,
         tonic=tonic,
@@ -381,16 +560,19 @@ def generate_number_melody(
         chunk_mode=chunk_mode,
         modulus=modulus,
         octave_range=octave_range,
-        max_key=max_key
+        min_key=min_key,
+        max_key=max_key,
+        jump_model=jump_model,
+        register_mode=register_mode
     )
     
-    # 4. Build duration model from style tracks
+    # 5. Build duration model from style tracks
     duration_model = build_duration_model(style_tracks)
     
-    # 5. Predict durations
+    # 6. Predict durations
     durations = predict_durations(keys, duration_model, strategy=duration_strategy)
     
-    # 6. Create Note objects
+    # 7. Create Note objects
     notes = []
     current_beat = 0.0
     
@@ -404,7 +586,7 @@ def generate_number_melody(
         notes.append(note)
         current_beat += duration
     
-    # 7. Create and return Track
+    # 8. Create and return Track
     if track_name is None:
         # Try to identify the sequence
         digit_prefix = digit_string[:20].replace(" ", "").replace(".", "")
@@ -416,7 +598,8 @@ def generate_number_melody(
             seq_name = "Number"
         
         chunk_label = "pair" if chunk_mode == "pair_mod" else "single"
-        track_name = f"Number Melody ({seq_name}, {mode}, {chunk_label})"
+        register_label = f", {register_mode}" if register_mode != "basic" else ""
+        track_name = f"Number Melody ({seq_name}, {mode}, {chunk_label}{register_label})"
     
     return Track(
         name=track_name,
@@ -438,6 +621,13 @@ Examples:
   python number_melody.py --digits 314159265358979 --tonic 48 \\
     --chunk pair_mod --modulus 12 --style demos/chopin-etude.mid \\
     --out pi_chromatic.mid --bpm 96 --max-key 60
+
+  # Multiple styles with jump_predict (octave disambiguation):
+  python number_melody.py --digits 314159265358979 --tonic 40 \\
+    --chunk pair_mod --modulus 12 --register jump_predict \\
+    --min-key 28 --max-key 64 \\
+    --style demos/chopin-etude.mid --style demos/liszt-preludio.mid \\
+    --style demos/scarlatti-sonata.mid --out pi_jump_predict.mid --bpm 96
 
   # Multiple styles, single digit mode:
   python number_melody.py --digits 112358132134 --tonic 40 --chunk single \\
@@ -499,10 +689,22 @@ Examples:
         help="For pair_mod: modulus to apply (default: 12 for chromatic)"
     )
     parser.add_argument(
+        "--min-key",
+        type=int,
+        default=None,
+        help="Minimum key to clamp to (default: tonic)"
+    )
+    parser.add_argument(
         "--max-key",
         type=int,
         default=None,
         help="Maximum key to clamp to (default: auto, typically ~64 for comfortable register)"
+    )
+    parser.add_argument(
+        "--register",
+        choices=["basic", "jump_predict"],
+        default="basic",
+        help="Register mode: 'basic' (original) or 'jump_predict' (octave disambiguation, default: basic)"
     )
     parser.add_argument(
         "--strategy",
@@ -528,6 +730,9 @@ Examples:
     print(f"\nGenerating melody from digits: {args.digits[:50]}...")
     print(f"  Tonic={args.tonic}, Mode={args.mode}, Octave Range={args.octave_range}")
     print(f"  Chunk mode={args.chunk}, Modulus={args.modulus}")
+    print(f"  Register mode={args.register}")
+    if args.min_key:
+        print(f"  Min key={args.min_key}")
     if args.max_key:
         print(f"  Max key={args.max_key}")
     print(f"  Duration strategy={args.strategy}, BPM={args.bpm}")
@@ -541,7 +746,9 @@ Examples:
         octave_range=args.octave_range,
         chunk_mode=args.chunk,
         modulus=args.modulus,
+        min_key=args.min_key,
         max_key=args.max_key,
+        register_mode=args.register,
         duration_strategy=args.strategy
     )
     

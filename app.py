@@ -269,7 +269,8 @@ def main():
     
     with st.expander("🔢 Number Melody — Generate melody from digit sequences"):
         st.write("Transform digit strings (Pi, Fibonacci, dates, etc.) into melodies "
-                "with durations learned from style MIDIs.")
+                "with durations learned from style MIDIs. Now with **pair_mod chunking** "
+                "for richer pitch variation and **multi-style training**!")
         
         col1, col2 = st.columns([2, 1])
         
@@ -288,15 +289,41 @@ def main():
             st.caption("• Fibonacci: 112358132134...")
             st.caption("• Date: 20260908")
         
+        # Chunking mode
+        st.write("**Pitch Mapping**")
         col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            chunk_mode = st.radio(
+                "Chunk Mode",
+                options=["pair_mod", "single"],
+                index=0,
+                help="pair_mod (recommended): Digit pairs 00-99 → pitch steps (richer variation)\n"
+                     "single: One digit → scale degree (original mode)"
+            )
+        
+        with col2:
+            modulus = st.number_input(
+                "Modulus (pair_mod)",
+                min_value=5,
+                max_value=24,
+                value=12,
+                help="12=chromatic, 7=diatonic scale, 5=pentatonic"
+            )
+        
+        with col3:
+            if chunk_mode == "pair_mod" and modulus == 12:
+                st.info("Modulus 12: Using chromatic offsets from tonic")
+        
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             tonic = st.number_input(
                 "Tonic (Root Key)",
                 min_value=1,
                 max_value=88,
-                value=48,
-                help="Root key (48 = middle C)"
+                value=40,
+                help="Root key (40 = E below middle C, 48 = middle C)"
             )
         
         with col2:
@@ -304,7 +331,7 @@ def main():
                 "Scale Mode",
                 options=list(SCALE_MODES.keys()),
                 index=0,
-                help="Scale to map digits onto"
+                help="Scale to map values onto (for single mode or reference)"
             )
         
         with col3:
@@ -316,33 +343,70 @@ def main():
                 help="How many octaves to span"
             )
         
+        with col4:
+            max_key = st.number_input(
+                "Max Key",
+                min_value=1,
+                max_value=88,
+                value=64,
+                help="Cap highest note (64 = comfortable, ~E above middle C)"
+            )
+        
+        # Style sources
+        st.write("**Style Sources (for duration learning)**")
         col1, col2 = st.columns(2)
         
         with col1:
-            # Style MIDI selection
             style_source = st.radio(
-                "Style Source (for duration learning)",
-                options=["Use Current Song", "Load Demo", "Upload MIDI"],
-                horizontal=True
+                "Style Source",
+                options=["Use Current Song", "Load Multiple Demos", "Upload MIDI"],
+                index=1,
+                horizontal=False
             )
             
-            style_midi_path = None
+            style_tracks = []
             
-            if style_source == "Load Demo":
+            if style_source == "Use Current Song":
+                style_tracks = st.session_state.song.tracks
+            
+            elif style_source == "Load Multiple Demos":
                 demos_dir = Path("demos")
                 if demos_dir.exists():
                     demo_files = sorted([f.stem for f in demos_dir.glob("*.mid")])
                     if demo_files:
-                        selected_demo = st.selectbox("Select Demo", demo_files)
-                        style_midi_path = demos_dir / f"{selected_demo}.mid"
+                        selected_demos = st.multiselect(
+                            "Select Demo MIDIs (multiple recommended for richer patterns)",
+                            demo_files,
+                            default=demo_files[:3] if len(demo_files) >= 3 else demo_files,
+                            help="Select multiple MIDIs to merge their duration patterns"
+                        )
+                        
+                        if selected_demos:
+                            for demo_name in selected_demos:
+                                demo_path = demos_dir / f"{demo_name}.mid"
+                                demo_song = load_midi(str(demo_path))
+                                style_tracks.extend(demo_song.tracks)
+                            
+                            st.caption(f"✓ Loaded {len(style_tracks)} tracks from {len(selected_demos)} MIDIs")
             
             elif style_source == "Upload MIDI":
-                style_upload = st.file_uploader("Upload Style MIDI", type=["mid", "midi"], key="style_midi")
-                if style_upload is not None:
+                style_upload = st.file_uploader(
+                    "Upload Style MIDI",
+                    type=["mid", "midi"],
+                    key="style_midi",
+                    accept_multiple_files=True
+                )
+                if style_upload:
                     import tempfile
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".mid") as tmp_file:
-                        tmp_file.write(style_upload.read())
-                        style_midi_path = Path(tmp_file.name)
+                    for uploaded_file in style_upload:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".mid") as tmp_file:
+                            tmp_file.write(uploaded_file.read())
+                            tmp_path = Path(tmp_file.name)
+                            style_song = load_midi(str(tmp_path))
+                            style_tracks.extend(style_song.tracks)
+                    
+                    if style_tracks:
+                        st.caption(f"✓ Loaded {len(style_tracks)} tracks from {len(style_upload)} MIDIs")
         
         with col2:
             duration_strategy = st.radio(
@@ -352,38 +416,51 @@ def main():
                 help="How to pick duration from learned patterns: "
                      "mode (most common), median (middle value), random (sample)"
             )
+            
+            melody_bpm = st.number_input(
+                "BPM Override",
+                min_value=40,
+                max_value=240,
+                value=96,
+                help="Tempo for generated melody (96 = calm, default)"
+            )
         
         if st.button("🎵 Generate Number Melody", type="primary"):
             try:
-                # Get style tracks
-                style_tracks = []
-                
-                if style_source == "Use Current Song":
-                    style_tracks = st.session_state.song.tracks
-                elif style_midi_path and style_midi_path.exists():
-                    style_song = load_midi(str(style_midi_path))
-                    style_tracks = style_song.tracks
-                
                 if not style_tracks:
                     st.error("⚠️ No style tracks available. Please select a style source.")
                 else:
                     # Generate melody
-                    with st.spinner("Generating number melody..."):
+                    with st.spinner("Generating number melody with multi-style patterns..."):
                         melody_track = generate_number_melody(
                             digit_string=digit_string,
                             tonic=tonic,
                             mode=mode,
                             style_tracks=style_tracks,
-                            bpm=st.session_state.song.bpm,
+                            bpm=melody_bpm,
                             octave_range=octave_range,
+                            chunk_mode=chunk_mode,
+                            modulus=modulus,
+                            max_key=max_key,
                             duration_strategy=duration_strategy
                         )
+                    
+                    # Update song BPM if different
+                    if melody_bpm != st.session_state.song.bpm:
+                        st.session_state.song.bpm = melody_bpm
                     
                     # Add to song
                     st.session_state.song.tracks.append(melody_track)
                     
-                    st.success(f"✓ Generated {len(melody_track.notes)} notes. "
-                             f"Added track: {melody_track.name}")
+                    # Show key range
+                    if melody_track.notes:
+                        keys = [n.key for n in melody_track.notes]
+                        key_range = f"{min(keys)}-{max(keys)}"
+                    else:
+                        key_range = "N/A"
+                    
+                    st.success(f"✓ Generated {len(melody_track.notes)} notes "
+                             f"(key range: {key_range}). Added track: {melody_track.name}")
                     st.rerun()
             
             except Exception as e:

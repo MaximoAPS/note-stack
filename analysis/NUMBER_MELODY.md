@@ -22,26 +22,56 @@
 
 ### 1. Pitch Mapping: Digits → Keys
 
-**Modes supported (Phase 1)**:
+#### Chunking Modes (Phase 1.1)
+
+**single mode** (original):
+- Each digit 0-9 maps directly to a scale degree
+- Limited pitch variation (only 10 distinct values)
+
+**pair_mod mode** (recommended, new default):
+- Consecutive digit pairs treated as 00-99
+- Apply modulus: `value % modulus` → pitch steps
+- **Much richer variation** (up to `modulus` distinct values)
+- Odd trailing digit handled alone
+
+**Modulus values**:
+- **12** (recommended): Chromatic offsets from tonic (full 12-tone range)
+- **7**: Diatonic scale degrees (major/minor scale)
+- **5**: Pentatonic degrees
+
+**Example — Pi digits with pair_mod, modulus=12**:
+```
+Digits:  3 1 4 1 5 9 2 6 5 3 5 8
+Pairs:   31     41     59     26     53     58
+Mod 12:   7      5     11      2      5     10
+→ Chromatic offsets from tonic: G, F, B, D, F, A#
+```
+
+**Modes supported**:
 - **Major**: 0→1→2→3→4→5→6→7→8→9 maps to C D E F G A B C D E
 - **Natural Minor**: A B C D E F G A B C
 - **Pentatonic Major**: C D E G A C D E G A
 - **Pentatonic Minor**: A C D E G A C D E G
-- **Chromatic**: All 12 semitones (0→tonic, 9→tonic+9)
+- **Chromatic**: All 12 semitones (0→tonic, 11→tonic+11)
 
-**Octave wrapping**:
+**Register Control**:
+- `max_key` parameter caps highest note (default: ~64 for comfortable listening)
+- `octave_range` controls vertical span
+- Prevents occasional "bursts" of very high notes
+
+**Mapping logic (pair_mod + modulus=12)**:
 ```python
-scale_degrees = mode_intervals[digit]  # e.g. [0,2,4,5,7,9,11] for major
-pitch_class = scale_degrees[digit % len(scale_degrees)]
-octave_offset = (digit // len(scale_degrees)) % octave_range
-key = tonic + pitch_class + octave_offset * 12
+# For each digit pair 00-99:
+pair_value = digit1 * 10 + digit2
+chromatic_offset = pair_value % 12  # 0-11
+octave_offset = (chromatic_offset // 12) % octave_range
+key = tonic + chromatic_offset + octave_offset * 12
+key = min(key, max_key)  # Clamp to comfortable register
 ```
-
-**Custom maps** (Phase 2): User can define arbitrary digit→key mappings.
 
 ---
 
-### 2. Duration Model: Jump-Conditioned Histograms
+### 2. Duration Model: Jump-Conditioned Histograms (Multi-Style)
 
 **Problem**: Raw note sequence has no rhythm. We need to predict duration for each note.
 
@@ -52,24 +82,28 @@ For each consecutive note pair in the digit melody:
 2. Look up P(duration | jump) from style MIDIs
 3. Quantize duration to musical grid (0.25, 0.5, 1.0, 2.0 beats)
 
-**Training**:
-- Load style MIDI(s) as `mashup_source` tracks
-- For each note pair `(n_prev, n_curr)` in style:
+**Training (Multi-Style Support)**:
+- Load **multiple style MIDIs** and merge their tracks
+- For each note pair `(n_prev, n_curr)` across all style tracks:
   - `jump = n_curr.key - n_prev.key`
   - `duration = n_curr.duration_beats`
   - Record `(jump, duration)` in histogram
 - Build conditional distribution: `P(duration_bin | jump)`
-- Optional: smooth with context (last k jumps)
+- **Richer patterns** from diverse styles (Romantic + Jazz + Classical)
 
 **Prediction**:
 - For each note in digit melody, given previous note:
   - `jump = current_key - prev_key`
-  - Sample duration from `P(duration | jump)` (or use mode/median)
+  - Sample duration from `P(duration | jump)` (use mode/median/random)
   - Clamp duration to [0.25, 4.0] beats
   - Assign to note
 
 **Fallback**:
-- If jump not seen in style, use nearest jump or global duration mode (0.5 beats)
+- If jump not seen in style, use default duration (0.5 beats)
+
+**BPM Guidance**:
+- Default BPM: **96** (calmer feel than original 120)
+- User can override for specific tempo preferences
 
 ---
 
@@ -141,49 +175,59 @@ def generate_number_melody(
     tonic: int,
     mode: str,
     style_tracks: List[Track],
-    bpm: float = 120.0,
+    bpm: float = 96.0,
     octave_range: int = 2,
+    chunk_mode: str = "pair_mod",
+    modulus: int = 12,
+    max_key: Optional[int] = None,
     duration_strategy: Literal["mode", "median", "random"] = "mode"
 ) -> Track:
     """
     Generate melody track from digit string.
     
-    Args:
-        digit_string: String with digits (e.g. "314159265358979")
-        tonic: Root key (e.g. 48 for middle C)
-        mode: Scale mode (major, minor, pentatonic_major, etc.)
-        style_tracks: Tracks to learn durations from
-        bpm: Tempo
-        octave_range: How many octaves to span
-        duration_strategy: How to pick duration from histogram (mode/median/random)
+    New defaults (Phase 1.1):
+        bpm=96 (calmer tempo)
+        chunk_mode="pair_mod" (richer variation)
+        modulus=12 (chromatic)
+        max_key=None (auto, typically ~64)
     
     Returns:
         Generated melody Track
     """
-    # 1. Parse digits
-    # 2. Map to keys
-    # 3. Build duration model from style tracks
-    # 4. Predict durations
-    # 5. Create Note objects at cumulative start times
-    # 6. Return Track with name "Number Melody (Pi)" etc.
-    pass
 ```
 
 ---
 
 ## CLI Smoke Test
 
+**Multi-style with pair_mod (recommended)**:
 ```bash
-python number_melody.py \
+python3 number_melody.py \
   --digits 314159265358979323846 \
-  --tonic 48 \
-  --mode major \
-  --style demos/joplin-entertainer.mid \
-  --out /tmp/pi_melody.mid \
-  --bpm 120
+  --tonic 40 \
+  --chunk pair_mod \
+  --modulus 12 \
+  --style demos/chopin-etude.mid \
+  --style demos/liszt-preludio.mid \
+  --style demos/scarlatti-sonata.mid \
+  --out /tmp/pi_multi.mid \
+  --bpm 96 \
+  --max-key 60
 ```
 
-**Expected**: `/tmp/pi_melody.mid` contains melody track with varied durations.
+**Single digit mode (original)**:
+```bash
+python3 number_melody.py \
+  --digits 112358132134 \
+  --tonic 48 \
+  --mode pentatonic_minor \
+  --chunk single \
+  --style demos/chopin-etude.mid \
+  --out /tmp/fibonacci.mid \
+  --bpm 90
+```
+
+**Expected**: MIDI files with melodies having varied durations learned from style patterns.
 
 ---
 
@@ -193,18 +237,22 @@ Add panel in `app.py`:
 
 **"Number Melody" Section**:
 - Text area: Paste digit string
-- Number input: Tonic (1-88, default 48)
+- **Chunk mode selector**: pair_mod (default) or single
+- **Modulus input**: 12 (chromatic), 7 (diatonic), 5 (pentatonic)
+- Number input: Tonic (1-88, default 40 for lower register)
 - Dropdown: Mode (major, minor, pentatonic_major, pentatonic_minor, chromatic)
 - Number input: Octave range (1-4, default 2)
-- MIDI uploader: Style MIDI(s) or dropdown from demos
+- **Number input: Max key (default 64 for comfortable register)**
+- **Multi-select: Style MIDI demos (select multiple for richer patterns)**
 - Radio: Duration strategy (mode, median, random)
+- **Number input: BPM override (default 96 for calmer tempo)**
 - Button: "Generate Melody"
 
 **On Generate**:
-- Load style MIDI(s) as Track list
-- Call `generate_number_melody()`
-- Add generated track to session
-- Display success + timeline preview
+- Load multiple style MIDIs and merge all tracks
+- Call `generate_number_melody(chunk_mode="pair_mod", modulus=12, ...)`
+- Add generated track to session with BPM override
+- Display key range and note count
 - Button: "Adorn this melody" (if editor_session + pattern_generators available)
 
 ---

@@ -11,6 +11,7 @@ import altair as alt
 from notes import Song, Track, Note
 from synth import synthesize_song, export_wav
 from midi_io import load_midi, export_midi
+from number_melody import generate_number_melody, SCALE_MODES
 
 
 def create_piano_song_preset() -> Song:
@@ -262,6 +263,239 @@ def main():
             new_track = Track(name=f"Track {len(st.session_state.song.tracks) + 1}")
             st.session_state.song.tracks.append(new_track)
             st.rerun()
+    
+    # Number Melody section
+    st.divider()
+    
+    with st.expander("🔢 Number Melody — Generate melody from digit sequences"):
+        st.write("Transform digit strings (Pi, Fibonacci, dates, etc.) into melodies "
+                "with durations learned from style MIDIs. Features: **pair_mod chunking** "
+                "for richer pitch variation, **multi-style training**, and **jump_predict mode** "
+                "for style-aware octave disambiguation spanning the full keyboard!")
+        
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            digit_string = st.text_area(
+                "Digit String",
+                value="314159265358979323846",
+                help="Enter any digit sequence (e.g., Pi digits, Fibonacci, dates). "
+                     "Non-digit characters will be ignored."
+            )
+        
+        with col2:
+            st.write("**Example sequences:**")
+            st.caption("• Pi: 314159265358979...")
+            st.caption("• e: 271828182845904...")
+            st.caption("• Fibonacci: 112358132134...")
+            st.caption("• Date: 20260908")
+        
+        # Chunking mode
+        st.write("**Pitch Mapping**")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            chunk_mode = st.radio(
+                "Chunk Mode",
+                options=["pair_mod", "single"],
+                index=0,
+                help="pair_mod (recommended): Digit pairs 00-99 → pitch steps (richer variation)\n"
+                     "single: One digit → scale degree (original mode)"
+            )
+        
+        with col2:
+            modulus = st.number_input(
+                "Modulus (pair_mod)",
+                min_value=5,
+                max_value=24,
+                value=12,
+                help="12=chromatic, 7=diatonic scale, 5=pentatonic"
+            )
+        
+        with col3:
+            if chunk_mode == "pair_mod" and modulus == 12:
+                st.info("Modulus 12: Using chromatic offsets from tonic")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            tonic = st.number_input(
+                "Tonic (Root Key)",
+                min_value=1,
+                max_value=88,
+                value=40,
+                help="Root key (40 = E below middle C, 48 = middle C)"
+            )
+        
+        with col2:
+            mode = st.selectbox(
+                "Scale Mode",
+                options=list(SCALE_MODES.keys()),
+                index=0,
+                help="Scale to map values onto (for single mode or reference)"
+            )
+        
+        with col3:
+            octave_mode = st.radio(
+                "Octave Mode",
+                options=["fixed", "jump_predict"],
+                index=0,
+                help="fixed: Deterministic octave mapping (original)\n"
+                     "jump_predict: Style-aware octave disambiguation (spans full keyboard)"
+            )
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            octave_range = st.number_input(
+                "Octave Range (fixed mode)",
+                min_value=1,
+                max_value=4,
+                value=2,
+                help="How many octaves to span (only used in fixed mode)",
+                disabled=(octave_mode == "jump_predict")
+            )
+        
+        with col2:
+            min_key = st.number_input(
+                "Min Key (jump_predict)",
+                min_value=1,
+                max_value=88,
+                value=28,
+                help="Minimum key for jump_predict mode (28 = E below bass staff)",
+                disabled=(octave_mode == "fixed")
+            )
+        
+        with col3:
+            max_key = st.number_input(
+                "Max Key",
+                min_value=1,
+                max_value=88,
+                value=72 if octave_mode == "jump_predict" else 64,
+                help="Maximum key (64 = comfortable for fixed, 72 = C above treble for jump_predict)"
+            )
+        
+        # Style sources
+        st.write("**Style Sources (for duration learning)**")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            style_source = st.radio(
+                "Style Source",
+                options=["Use Current Song", "Load Multiple Demos", "Upload MIDI"],
+                index=1,
+                horizontal=False
+            )
+            
+            style_tracks = []
+            
+            if style_source == "Use Current Song":
+                style_tracks = st.session_state.song.tracks
+            
+            elif style_source == "Load Multiple Demos":
+                demos_dir = Path("demos")
+                if demos_dir.exists():
+                    demo_files = sorted([f.stem for f in demos_dir.glob("*.mid")])
+                    if demo_files:
+                        selected_demos = st.multiselect(
+                            "Select Demo MIDIs (multiple recommended for richer patterns)",
+                            demo_files,
+                            default=demo_files[:3] if len(demo_files) >= 3 else demo_files,
+                            help="Select multiple MIDIs to merge their duration patterns"
+                        )
+                        
+                        if selected_demos:
+                            for demo_name in selected_demos:
+                                demo_path = demos_dir / f"{demo_name}.mid"
+                                demo_song = load_midi(str(demo_path))
+                                style_tracks.extend(demo_song.tracks)
+                            
+                            st.caption(f"✓ Loaded {len(style_tracks)} tracks from {len(selected_demos)} MIDIs")
+            
+            elif style_source == "Upload MIDI":
+                style_upload = st.file_uploader(
+                    "Upload Style MIDI",
+                    type=["mid", "midi"],
+                    key="style_midi",
+                    accept_multiple_files=True
+                )
+                if style_upload:
+                    import tempfile
+                    for uploaded_file in style_upload:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".mid") as tmp_file:
+                            tmp_file.write(uploaded_file.read())
+                            tmp_path = Path(tmp_file.name)
+                            style_song = load_midi(str(tmp_path))
+                            style_tracks.extend(style_song.tracks)
+                    
+                    if style_tracks:
+                        st.caption(f"✓ Loaded {len(style_tracks)} tracks from {len(style_upload)} MIDIs")
+        
+        with col2:
+            duration_strategy = st.radio(
+                "Duration Strategy",
+                options=["mode", "median", "random"],
+                index=0,
+                help="How to pick duration from learned patterns: "
+                     "mode (most common), median (middle value), random (sample)"
+            )
+            
+            melody_bpm = st.number_input(
+                "BPM Override",
+                min_value=40,
+                max_value=240,
+                value=96,
+                help="Tempo for generated melody (96 = calm, default)"
+            )
+        
+        if st.button("🎵 Generate Number Melody", type="primary"):
+            try:
+                if not style_tracks:
+                    st.error("⚠️ No style tracks available. Please select a style source.")
+                else:
+                    # Generate melody
+                    spinner_text = "Generating number melody with multi-style patterns"
+                    if octave_mode == "jump_predict":
+                        spinner_text += " (learning jump preferences for octave disambiguation)..."
+                    else:
+                        spinner_text += "..."
+                    
+                    with st.spinner(spinner_text):
+                        melody_track = generate_number_melody(
+                            digit_string=digit_string,
+                            tonic=tonic,
+                            mode=mode,
+                            style_tracks=style_tracks,
+                            bpm=melody_bpm,
+                            octave_range=octave_range,
+                            chunk_mode=chunk_mode,
+                            modulus=modulus,
+                            max_key=max_key,
+                            min_key=min_key if octave_mode == "jump_predict" else None,
+                            octave_mode=octave_mode,
+                            duration_strategy=duration_strategy
+                        )
+                    
+                    # Update song BPM if different
+                    if melody_bpm != st.session_state.song.bpm:
+                        st.session_state.song.bpm = melody_bpm
+                    
+                    # Add to song
+                    st.session_state.song.tracks.append(melody_track)
+                    
+                    # Show key range
+                    if melody_track.notes:
+                        keys = [n.key for n in melody_track.notes]
+                        key_range = f"{min(keys)}-{max(keys)}"
+                    else:
+                        key_range = "N/A"
+                    
+                    st.success(f"✓ Generated {len(melody_track.notes)} notes "
+                             f"(key range: {key_range}). Added track: {melody_track.name}")
+                    st.rerun()
+            
+            except Exception as e:
+                st.error(f"Error generating melody: {str(e)}")
     
     # Track editors
     st.divider()

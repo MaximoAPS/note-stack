@@ -41,22 +41,24 @@ def load_midi(filename: str) -> Song:
     
     for track in mid.tracks:
         current_time = 0
-        # Track active notes: (channel, note) -> start_tick
-        active_notes: Dict[tuple, int] = {}
+        # Track active notes: (channel, note) -> (start_tick, on_velocity)
+        active_notes: Dict[tuple, tuple] = {}
         
         for msg in track:
             current_time += msg.time
             
             if msg.type == 'note_on' and msg.velocity > 0:
                 channel = msg.channel if hasattr(msg, 'channel') else 0
-                active_notes[(channel, msg.note)] = current_time
+                # Store both start_tick and note_on velocity
+                active_notes[(channel, msg.note)] = (current_time, msg.velocity)
             
             elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
                 channel = msg.channel if hasattr(msg, 'channel') else 0
                 key_tuple = (channel, msg.note)
                 
                 if key_tuple in active_notes:
-                    start_tick = active_notes.pop(key_tuple)
+                    # Retrieve stored start_tick and on_velocity
+                    start_tick, on_velocity = active_notes.pop(key_tuple)
                     duration_ticks = current_time - start_tick
                     
                     # Convert to beats
@@ -68,7 +70,8 @@ def load_midi(filename: str) -> Song:
                     
                     # Only include valid piano keys (1-88)
                     if 1 <= piano_key <= 88:
-                        velocity = msg.velocity if hasattr(msg, 'velocity') else 100
+                        # Use the stored note_on velocity, clamped to valid range
+                        velocity = max(1, min(127, on_velocity))
                         note = Note(
                             key=piano_key,
                             start_beat=start_beat,

@@ -14,6 +14,32 @@ Note Stack V1 is a Streamlit web application for composing and synthesizing pian
 - **Interactive Timeline**: Visual timeline editor for each track
 - **MIDI Import/Export**: Load MIDI files and export your compositions
 - **Demo Presets**: Includes the original "Piano Song" from Desmos
+- **Number Melody**: Transform digit sequences (Pi, Fibonacci, dates) into melodies with learned durations
+
+### Number Melody
+
+Turn any digit sequence into expressive melodies! The Number Melody feature maps digits to piano keys using scales (major, minor, pentatonic, chromatic) and learns natural rhythm patterns from style MIDIs.
+
+**Example workflow:**
+1. Paste digits of Pi: `3.14159265358979323846...`
+2. Choose tuning: C major, tonic 48 (middle C)
+3. Select style MIDI (Chopin, Joplin, etc.) to learn duration patterns
+4. Generate melody with musically-sensible rhythms
+
+The system analyzes interval jumps in your style MIDIs and predicts note durations based on melodic motion, creating melodies that feel musical rather than mechanical.
+
+**CLI Usage:**
+```bash
+python3 number_melody.py \
+  --digits 314159265358979323846 \
+  --tonic 48 \
+  --mode major \
+  --style demos/chopin-etude.mid \
+  --out pi_melody.mid \
+  --bpm 120
+```
+
+See `analysis/NUMBER_MELODY.md` for full documentation and technical details.
 
 ## Installation
 
@@ -95,11 +121,15 @@ note-stack/
 ├── notes.py            # Data model (Note, Track, Song)
 ├── synth.py            # Synthesis engine
 ├── midi_io.py          # MIDI import/export
+├── number_melody.py    # Number Melody feature
 ├── check_synth.py      # Synthesis test
 ├── requirements.txt    # Python dependencies
+├── analysis/           # Technical documentation
+│   ├── NUMBER_MELODY.md    # Number Melody docs (EN)
+│   └── NUMBER_MELODY.es.md # Number Melody docs (ES)
 ├── demos/              # MIDI demo files
 │   ├── ATTRIBUTION.md  # MAESTRO dataset license
-│   └── .gitkeep
+│   └── *.mid           # Demo MIDI files
 └── README.md
 ```
 

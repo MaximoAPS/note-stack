@@ -14,7 +14,27 @@ Note Stack V1 is a Streamlit web application for composing and synthesizing pian
 - **Interactive Timeline**: Visual timeline editor for each track
 - **MIDI Import/Export**: Load MIDI files and export your compositions
 - **Demo Presets**: Includes the original "Piano Song" from Desmos
-- **Number Melody**: Transform digit sequences (Pi, Fibonacci, dates) into melodies with learned durations
+- **🔢 Number Melody**: Transform digit sequences (Pi, Fibonacci, dates) into melodies with learned durations
+- **🤖 AI Track Generation**: Heuristic-based bass, chord, harmony, and adornment generators
+
+## Studio UI
+
+The **Studio UI** provides an end-to-end workflow for creating expressive piano compositions:
+
+1. **Number Melody Generator** — Paste digit sequences (Pi, Fibonacci, dates) and transform them into melodies
+   - **pair_mod chunking**: Digit pairs (00-99) mapped via modulus for rich pitch variation
+   - **Multi-style training**: Learn duration patterns from multiple demo MIDIs
+   - **Tonic/mode/octave controls**: Customize scale and range
+   - Generates a "Solo" track ready to play or edit
+
+2. **Tracks Studio** — Add, edit, and generate AI tracks
+   - **Track roles**: Mark tracks as Solo (melody), Base (bass/chords), or Adorn (decoration)
+   - **AI Fill Track** buttons: Generate Bass Line (keys 1-28), Chord Base (keys 29-52), Adorn Pluck, or Harmony Line from existing tracks
+   - **Per-track FX**: Intensity (harmonic multiplier), Delay (30/160s echo), Hold (sustain duration)
+   - **Edit notes**: Interactive data editor with add/delete rows, beat-range delete
+   - **Mute/solo**: Isolate tracks during composition
+
+3. **One-Click Play** — Synthesize and download WAV/MIDI instantly
 
 ### Number Melody
 
@@ -22,9 +42,10 @@ Turn any digit sequence into expressive melodies! The Number Melody feature maps
 
 **Example workflow:**
 1. Paste digits of Pi: `3.14159265358979323846...`
-2. Choose tuning: C major, tonic 48 (middle C)
-3. Select style MIDI (Chopin, Joplin, etc.) to learn duration patterns
-4. Generate melody with musically-sensible rhythms
+2. Choose chunking: `pair_mod` with modulus 12 (chromatic)
+3. Select multiple style MIDIs (Chopin + Liszt + Scarlatti)
+4. Set tonic 40 (E), max key 64
+5. Generate → Creates melody with musically-sensible rhythms
 
 The system analyzes interval jumps in your style MIDIs and predicts note durations based on melodic motion, creating melodies that feel musical rather than mechanical.
 
@@ -32,14 +53,26 @@ The system analyzes interval jumps in your style MIDIs and predicts note duratio
 ```bash
 python3 number_melody.py \
   --digits 314159265358979323846 \
-  --tonic 48 \
-  --mode major \
+  --tonic 40 \
+  --chunk pair_mod \
+  --modulus 12 \
   --style demos/chopin-etude.mid \
+  --style demos/liszt-preludio.mid \
   --out pi_melody.mid \
-  --bpm 120
+  --bpm 96
 ```
 
 See `analysis/NUMBER_MELODY.md` for full documentation and technical details.
+
+### AI Track Generation
+
+Generate new tracks using **Phase 1 heuristic patterns** from existing tracks:
+- **Bass Line** (keys 1-28): Extracts lowest notes
+- **Chord Base** (keys 29-52): Extracts note clusters/chords
+- **Adorn Pluck** (keys 45-72): Creates sparse decorative patterns
+- **Harmony Line** (keys 45-72): Harmonizes melody with interval transposition
+
+AI tracks are generated from other tracks in the song and automatically assigned role names (Base/Adorn).
 
 ## Installation
 
@@ -59,23 +92,26 @@ The app will open in your browser at `http://localhost:8501`.
 
 ### Quick Start
 
-1. Click "Load Piano Song" to load the Desmos reference composition
-2. Click "▶ Play" to synthesize and hear the music
-3. Adjust BPM, mute tracks, or modify parameters in each track expander
-4. Download as WAV or MIDI
+1. **Generate a Number Melody**: Paste Pi digits, select 3 style MIDIs, click "Generate"
+2. **Add AI tracks**: Open the generated Solo track, click "Bass Line" or "Chord Base"
+3. **Edit notes**: Use the interactive table to fine-tune individual notes
+4. **Adjust FX**: Set intensity (1.0-2.0), enable delay, adjust hold duration
+5. Click "▶ Play" to synthesize and hear the music
+6. Download as WAV or MIDI
 
 ### Creating Music
 
-- **Add Track**: Click "➕ Add Track" to create a new empty track
+- **Add Track**: Click "➕ Add Empty Track" to create a new track
 - **Track Parameters**:
   - **Intensity (I)**: Harmonic intensity multiplier (1.0 for melody, 2.0 for bass)
   - **Delay**: Enable 30/160 second delay voice for richer sound
   - **Hold (d)**: Sustain duration in seconds (0.5 for short, 2.0 for long notes)
-- **Add Notes**: Use the controls at the bottom of each track to add notes
+- **Edit Notes**: Use the data editor to add/modify/delete notes
   - Piano Key: 1-88 (A4 = key 49 = 440 Hz)
   - Start Beat: When the note begins
   - Duration: How long the note plays (in beats)
   - Velocity: Note dynamics (1-127, default 100)
+- **Delete beat ranges**: Enter range like "4-8" and click "Delete Range"
 
 ### MIDI Import
 
@@ -117,19 +153,25 @@ f = 2^((key - 49) / 12) × 440 Hz
 
 ```
 note-stack/
-├── app.py              # Streamlit web interface
-├── notes.py            # Data model (Note, Track, Song)
-├── synth.py            # Synthesis engine
-├── midi_io.py          # MIDI import/export
-├── number_melody.py    # Number Melody feature
-├── check_synth.py      # Synthesis test
-├── requirements.txt    # Python dependencies
-├── analysis/           # Technical documentation
+├── app.py                  # Streamlit Studio UI
+├── notes.py                # Data model (Note, Track, Song)
+├── synth.py                # Synthesis engine
+├── midi_io.py              # MIDI import/export (with velocity fix)
+├── number_melody.py        # Number Melody feature
+├── pattern_generators.py   # AI track generation heuristics
+├── track_helpers.py        # Track manipulation utilities
+├── editor_session.py       # Multi-MIDI session model (for advanced workflows)
+├── check_synth.py          # Synthesis test
+├── test_editor_session.py  # Editor session smoke tests
+├── requirements.txt        # Python dependencies
+├── analysis/               # Technical documentation
 │   ├── NUMBER_MELODY.md    # Number Melody docs (EN)
-│   └── NUMBER_MELODY.es.md # Number Melody docs (ES)
-├── demos/              # MIDI demo files
-│   ├── ATTRIBUTION.md  # MAESTRO dataset license
-│   └── *.mid           # Demo MIDI files
+│   ├── NUMBER_MELODY.es.md # Number Melody docs (ES)
+│   ├── EDITOR_UX.md        # Advanced editor vision (EN)
+│   └── EDITOR_UX.es.md     # Advanced editor vision (ES)
+├── demos/                  # MIDI demo files
+│   ├── ATTRIBUTION.md      # MAESTRO dataset license
+│   └── *.mid
 └── README.md
 ```
 
@@ -142,6 +184,14 @@ python check_synth.py
 ```
 
 This renders the Piano Song melody track and verifies output duration.
+
+Test the editor session model:
+
+```bash
+python test_editor_session.py
+```
+
+This runs smoke tests for multi-MIDI session management, track role assignment, and key range filtering.
 
 ## Credits
 

@@ -11,6 +11,7 @@ import altair as alt
 from notes import Song, Track, Note
 from synth import synthesize_song, export_wav
 from midi_io import load_midi, export_midi
+from number_melody import generate_number_melody, SCALE_MODES
 
 
 def create_piano_song_preset() -> Song:
@@ -262,6 +263,131 @@ def main():
             new_track = Track(name=f"Track {len(st.session_state.song.tracks) + 1}")
             st.session_state.song.tracks.append(new_track)
             st.rerun()
+    
+    # Number Melody section
+    st.divider()
+    
+    with st.expander("🔢 Number Melody — Generate melody from digit sequences"):
+        st.write("Transform digit strings (Pi, Fibonacci, dates, etc.) into melodies "
+                "with durations learned from style MIDIs.")
+        
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            digit_string = st.text_area(
+                "Digit String",
+                value="314159265358979323846",
+                help="Enter any digit sequence (e.g., Pi digits, Fibonacci, dates). "
+                     "Non-digit characters will be ignored."
+            )
+        
+        with col2:
+            st.write("**Example sequences:**")
+            st.caption("• Pi: 314159265358979...")
+            st.caption("• e: 271828182845904...")
+            st.caption("• Fibonacci: 112358132134...")
+            st.caption("• Date: 20260908")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            tonic = st.number_input(
+                "Tonic (Root Key)",
+                min_value=1,
+                max_value=88,
+                value=48,
+                help="Root key (48 = middle C)"
+            )
+        
+        with col2:
+            mode = st.selectbox(
+                "Scale Mode",
+                options=list(SCALE_MODES.keys()),
+                index=0,
+                help="Scale to map digits onto"
+            )
+        
+        with col3:
+            octave_range = st.number_input(
+                "Octave Range",
+                min_value=1,
+                max_value=4,
+                value=2,
+                help="How many octaves to span"
+            )
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Style MIDI selection
+            style_source = st.radio(
+                "Style Source (for duration learning)",
+                options=["Use Current Song", "Load Demo", "Upload MIDI"],
+                horizontal=True
+            )
+            
+            style_midi_path = None
+            
+            if style_source == "Load Demo":
+                demos_dir = Path("demos")
+                if demos_dir.exists():
+                    demo_files = sorted([f.stem for f in demos_dir.glob("*.mid")])
+                    if demo_files:
+                        selected_demo = st.selectbox("Select Demo", demo_files)
+                        style_midi_path = demos_dir / f"{selected_demo}.mid"
+            
+            elif style_source == "Upload MIDI":
+                style_upload = st.file_uploader("Upload Style MIDI", type=["mid", "midi"], key="style_midi")
+                if style_upload is not None:
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".mid") as tmp_file:
+                        tmp_file.write(style_upload.read())
+                        style_midi_path = Path(tmp_file.name)
+        
+        with col2:
+            duration_strategy = st.radio(
+                "Duration Strategy",
+                options=["mode", "median", "random"],
+                index=0,
+                help="How to pick duration from learned patterns: "
+                     "mode (most common), median (middle value), random (sample)"
+            )
+        
+        if st.button("🎵 Generate Number Melody", type="primary"):
+            try:
+                # Get style tracks
+                style_tracks = []
+                
+                if style_source == "Use Current Song":
+                    style_tracks = st.session_state.song.tracks
+                elif style_midi_path and style_midi_path.exists():
+                    style_song = load_midi(str(style_midi_path))
+                    style_tracks = style_song.tracks
+                
+                if not style_tracks:
+                    st.error("⚠️ No style tracks available. Please select a style source.")
+                else:
+                    # Generate melody
+                    with st.spinner("Generating number melody..."):
+                        melody_track = generate_number_melody(
+                            digit_string=digit_string,
+                            tonic=tonic,
+                            mode=mode,
+                            style_tracks=style_tracks,
+                            bpm=st.session_state.song.bpm,
+                            octave_range=octave_range,
+                            duration_strategy=duration_strategy
+                        )
+                    
+                    # Add to song
+                    st.session_state.song.tracks.append(melody_track)
+                    
+                    st.success(f"✓ Generated {len(melody_track.notes)} notes. "
+                             f"Added track: {melody_track.name}")
+                    st.rerun()
+            
+            except Exception as e:
+                st.error(f"Error generating melody: {str(e)}")
     
     # Track editors
     st.divider()

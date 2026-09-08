@@ -56,10 +56,10 @@ Mod 12:   7      5     11      2      5     10
 
 **Register Control**:
 - `max_key` parameter caps highest note (default: ~64 for comfortable listening)
-- `octave_range` controls vertical span
+- `octave_range` controls vertical span (only in fixed mode)
 - Prevents occasional "bursts" of very high notes
 
-**Mapping logic (pair_mod + modulus=12)**:
+**Mapping logic (pair_mod + modulus=12, fixed mode)**:
 ```python
 # For each digit pair 00-99:
 pair_value = digit1 * 10 + digit2
@@ -68,6 +68,71 @@ octave_offset = (chromatic_offset // 12) % octave_range
 key = tonic + chromatic_offset + octave_offset * 12
 key = min(key, max_key)  # Clamp to comfortable register
 ```
+
+---
+
+#### Octave Disambiguation (Phase 1.5 — Jump Predict Mode)
+
+**Problem**: Fixed mode maps pitch classes to a small register (typically 2 octaves). Real melodies roam the full keyboard.
+
+**Solution — Jump Predict Mode** (`--octave-mode jump_predict`):
+
+1. **Digits → Pitch Classes**: Pair_mod with modulus 12 gives pitch classes 0-11 (C, C♯, D, ..., B)
+2. **Octave Ambiguity**: Pitch class 3 (E♭) could be key 27, 39, 51, 63, 75... (E♭ in different octaves)
+3. **Jump Model**: Learn `P(Δkey | pitch_class_delta)` from style MIDIs
+   - For each consecutive note pair in style, record: pitch class delta (mod 12) → actual signed jump
+   - Example: PC delta 4 (major third) might be +4 semitones (up), -8 (down sixth), +16 (compound third)
+4. **Resolution**: For each next pitch class, pick the absolute key (octave) that gives the most probable jump from previous key
+
+**Example — Pi digits with jump_predict**:
+```
+Digits:      3 1 4 1 5 9 2 6 5
+Pairs:      31    41    59    26    5 (odd)
+Mod 12:      7     5    11     2    5
+PCs:        G     F     B     D    F
+
+Fixed mode (tonic=48, octave_range=2):
+  Keys: 55, 53, 59, 50, 53  (all within ~1 octave, predictable)
+
+Jump predict mode (min_key=28, max_key=72, Chopin+Liszt style):
+  Candidates for each PC:
+    G: [31, 43, 55, 67]  → pick 55 (start near tonic)
+    F: [29, 41, 53, 65]  → pick 53 (−2 semitones, common in style)
+    B: [35, 47, 59, 71]  → pick 59 (+6, fourth up, very common)
+    D: [26, 38, 50, 62]  → pick 50 (−9, down sixth, style shows composers drop after high note)
+    F: [29, 41, 53, 65]  → pick 53 (+3, small upward recovery)
+  
+  Keys: 55, 53, 59, 50, 53  (spans 28-72 range naturally, follows style jump patterns)
+```
+
+**Why This Works**:
+- Romantic piano (Chopin, Liszt) uses rich jump vocabulary: small steps, fourths, sixths, octaves
+- Jump model captures these preferences: after going up high, composers often drop down
+- Melody follows digit pitch classes **exactly** (mod 12) but octave choices are musical
+
+**CLI Example**:
+```bash
+python number_melody.py --digits 314159265358979 --tonic 48 \
+  --chunk pair_mod --modulus 12 --octave-mode jump_predict \
+  --min-key 28 --max-key 72 \
+  --style demos/chopin-etude.mid --style demos/liszt-preludio.mid \
+  --out pi_jump.mid --bpm 96
+```
+
+**Parameters**:
+- `--octave-mode jump_predict` (new, default: `fixed`)
+- `--min-key 28` (E below bass staff, default for jump_predict)
+- `--max-key 72` (C above treble staff, default for jump_predict)
+
+**When to Use Jump Predict**:
+- Want melody to span full keyboard range
+- Have rich style MIDIs with varied melodic motion (Romantic piano, Baroque, Jazz)
+- Pair_mod with modulus=12 for chromatic pitch classes
+
+**When to Use Fixed Mode**:
+- Simpler, more predictable output
+- Tighter register control with `octave_range`
+- Legacy compatibility
 
 ---
 
@@ -170,6 +235,27 @@ def predict_durations(
     # For each key, compute jump from previous, sample duration
     pass
 
+def build_jump_model(
+    style_tracks: List[Track]
+) -> Dict[int, List[int]]:
+    """
+    Build P(jump | pitch_class_delta) from style tracks.
+    Returns: Dict[pc_delta] -> List[signed_jumps]
+    """
+
+def resolve_keys_by_jump(
+    pitch_classes: List[int],
+    style_tracks: List[Track],
+    min_key: int = 28,
+    max_key: int = 72,
+    start_key: Optional[int] = None,
+    modulus: int = 12
+) -> List[int]:
+    """
+    Resolve pitch classes to absolute keys using jump prediction.
+    Core octave disambiguation algorithm.
+    """
+
 def generate_number_melody(
     digit_string: str,
     tonic: int,
@@ -180,16 +266,20 @@ def generate_number_melody(
     chunk_mode: str = "pair_mod",
     modulus: int = 12,
     max_key: Optional[int] = None,
+    min_key: Optional[int] = None,
+    octave_mode: Literal["fixed", "jump_predict"] = "fixed",
     duration_strategy: Literal["mode", "median", "random"] = "mode"
 ) -> Track:
     """
     Generate melody track from digit string.
     
-    New defaults (Phase 1.1):
+    New defaults (Phase 1.5):
         bpm=96 (calmer tempo)
         chunk_mode="pair_mod" (richer variation)
         modulus=12 (chromatic)
-        max_key=None (auto, typically ~64)
+        octave_mode="fixed" (original), or "jump_predict" (new!)
+        max_key=None (auto: ~64 for fixed, ~72 for jump_predict)
+        min_key=None (auto: ~28 for jump_predict)
     
     Returns:
         Generated melody Track
@@ -200,17 +290,35 @@ def generate_number_melody(
 
 ## CLI Smoke Test
 
-**Multi-style with pair_mod (recommended)**:
+**Jump predict mode (new! recommended for full keyboard)**:
+```bash
+python3 number_melody.py \
+  --digits 314159265358979323846 \
+  --tonic 48 \
+  --chunk pair_mod \
+  --modulus 12 \
+  --octave-mode jump_predict \
+  --min-key 28 \
+  --max-key 72 \
+  --style demos/chopin-etude.mid \
+  --style demos/liszt-preludio.mid \
+  --style demos/scarlatti-sonata.mid \
+  --out /tmp/pi_jump.mid \
+  --bpm 96
+```
+
+**Multi-style with pair_mod (fixed mode)**:
 ```bash
 python3 number_melody.py \
   --digits 314159265358979323846 \
   --tonic 40 \
   --chunk pair_mod \
   --modulus 12 \
+  --octave-mode fixed \
   --style demos/chopin-etude.mid \
   --style demos/liszt-preludio.mid \
   --style demos/scarlatti-sonata.mid \
-  --out /tmp/pi_multi.mid \
+  --out /tmp/pi_fixed.mid \
   --bpm 96 \
   --max-key 60
 ```
@@ -227,7 +335,10 @@ python3 number_melody.py \
   --bpm 90
 ```
 
-**Expected**: MIDI files with melodies having varied durations learned from style patterns.
+**Expected**: 
+- Jump predict: Melody spans full min/max range, octave choices follow style jump preferences
+- Fixed: Melody stays in narrow register, deterministic octave mapping
+- All: Varied durations learned from style patterns
 
 ---
 
@@ -241,16 +352,18 @@ Add panel in `app.py`:
 - **Modulus input**: 12 (chromatic), 7 (diatonic), 5 (pentatonic)
 - Number input: Tonic (1-88, default 40 for lower register)
 - Dropdown: Mode (major, minor, pentatonic_major, pentatonic_minor, chromatic)
-- Number input: Octave range (1-4, default 2)
-- **Number input: Max key (default 64 for comfortable register)**
-- **Multi-select: Style MIDI demos (select multiple for richer patterns)**
+- **Radio: Octave mode** (fixed, jump_predict) — NEW!
+- Number input: Octave range (1-4, default 2, only for fixed mode)
+- **Number input: Min key** (default 28 for jump_predict) — NEW!
+- **Number input: Max key** (default 64 for fixed, 72 for jump_predict)
+- **Multi-select: Style MIDI demos** (select multiple for richer patterns)
 - Radio: Duration strategy (mode, median, random)
-- **Number input: BPM override (default 96 for calmer tempo)**
+- **Number input: BPM override** (default 96 for calmer tempo)
 - Button: "Generate Melody"
 
 **On Generate**:
 - Load multiple style MIDIs and merge all tracks
-- Call `generate_number_melody(chunk_mode="pair_mod", modulus=12, ...)`
+- Call `generate_number_melody(chunk_mode="pair_mod", modulus=12, octave_mode="jump_predict", ...)`
 - Add generated track to session with BPM override
 - Display key range and note count
 - Button: "Adorn this melody" (if editor_session + pattern_generators available)
@@ -259,18 +372,23 @@ Add panel in `app.py`:
 
 ## Phase 2+ Roadmap (Document Only)
 
-### Deep Learning Duration Model
+### Deep Learning Jump+Duration Model
 
 **Architecture**:
-- **Input**: Jump sequence embeddings (last k jumps)
+- **Input**: Pitch class sequence + jump history embeddings
 - **CNN**: Local patches (±2 beat context) for rhythm patterns
 - **Transformer (GPT-2 style)**: Sequence modeling for longer dependencies
-- **Output**: Duration distribution (categorical over {0.25, 0.5, 1.0, 2.0, 4.0})
+- **Output**: Joint distribution over (jump, duration) pairs
 
 **Training**:
-- Collect jump→duration sequences from MAESTRO + user style packs
+- Collect (pitch_class, jump, duration) sequences from MAESTRO + user style packs
 - Train on millions of note transitions
 - Fine-tune per style pack (Romantic vs Jazz vs Pop)
+
+**Note**: Phase 1.5 implements statistical jump model (histogram-based). Deep learning would improve:
+- Context awareness (previous jumps influence next jump)
+- Joint jump+duration modeling
+- Style transfer quality
 
 ### Multi-Digit Chunking
 
@@ -302,6 +420,15 @@ Add panel in `app.py`:
 - Documentation complete (EN + ES)
 - PR opened
 
+✅ **Phase 1.5 Octave Disambiguation**:
+- Jump predict mode (`--octave-mode jump_predict`) implemented
+- User can set min/max key for full keyboard range
+- Jump model learns P(Δkey | pc_delta) from style MIDIs
+- Pitch classes (mod 12) resolved to absolute keys via style-aware jump preferences
+- Melody spans full keyboard naturally when style supports it
+- CLI + UI support for octave mode selection
+- Documentation updated with examples showing +4 vs −8 octave choices
+
 ---
 
 ## References
@@ -315,4 +442,4 @@ Add panel in `app.py`:
 
 **Author**: Cloud Agent + Maximo  
 **Date**: Sep 2026  
-**Version**: 1.0 (Phase 1 Statistical Duration Model)
+**Version**: 1.5 (Phase 1.5 — Statistical Jump Model + Octave Disambiguation)

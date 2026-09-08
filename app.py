@@ -269,8 +269,9 @@ def main():
     
     with st.expander("🔢 Number Melody — Generate melody from digit sequences"):
         st.write("Transform digit strings (Pi, Fibonacci, dates, etc.) into melodies "
-                "with durations learned from style MIDIs. Now with **pair_mod chunking** "
-                "for richer pitch variation and **multi-style training**!")
+                "with durations learned from style MIDIs. Features: **pair_mod chunking** "
+                "for richer pitch variation, **multi-style training**, and **jump_predict mode** "
+                "for style-aware octave disambiguation spanning the full keyboard!")
         
         col1, col2 = st.columns([2, 1])
         
@@ -315,7 +316,7 @@ def main():
             if chunk_mode == "pair_mod" and modulus == 12:
                 st.info("Modulus 12: Using chromatic offsets from tonic")
         
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3 = st.columns(3)
         
         with col1:
             tonic = st.number_input(
@@ -335,21 +336,43 @@ def main():
             )
         
         with col3:
+            octave_mode = st.radio(
+                "Octave Mode",
+                options=["fixed", "jump_predict"],
+                index=0,
+                help="fixed: Deterministic octave mapping (original)\n"
+                     "jump_predict: Style-aware octave disambiguation (spans full keyboard)"
+            )
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
             octave_range = st.number_input(
-                "Octave Range",
+                "Octave Range (fixed mode)",
                 min_value=1,
                 max_value=4,
                 value=2,
-                help="How many octaves to span"
+                help="How many octaves to span (only used in fixed mode)",
+                disabled=(octave_mode == "jump_predict")
             )
         
-        with col4:
+        with col2:
+            min_key = st.number_input(
+                "Min Key (jump_predict)",
+                min_value=1,
+                max_value=88,
+                value=28,
+                help="Minimum key for jump_predict mode (28 = E below bass staff)",
+                disabled=(octave_mode == "fixed")
+            )
+        
+        with col3:
             max_key = st.number_input(
                 "Max Key",
                 min_value=1,
                 max_value=88,
-                value=64,
-                help="Cap highest note (64 = comfortable, ~E above middle C)"
+                value=72 if octave_mode == "jump_predict" else 64,
+                help="Maximum key (64 = comfortable for fixed, 72 = C above treble for jump_predict)"
             )
         
         # Style sources
@@ -431,7 +454,13 @@ def main():
                     st.error("⚠️ No style tracks available. Please select a style source.")
                 else:
                     # Generate melody
-                    with st.spinner("Generating number melody with multi-style patterns..."):
+                    spinner_text = "Generating number melody with multi-style patterns"
+                    if octave_mode == "jump_predict":
+                        spinner_text += " (learning jump preferences for octave disambiguation)..."
+                    else:
+                        spinner_text += "..."
+                    
+                    with st.spinner(spinner_text):
                         melody_track = generate_number_melody(
                             digit_string=digit_string,
                             tonic=tonic,
@@ -442,6 +471,8 @@ def main():
                             chunk_mode=chunk_mode,
                             modulus=modulus,
                             max_key=max_key,
+                            min_key=min_key if octave_mode == "jump_predict" else None,
+                            octave_mode=octave_mode,
                             duration_strategy=duration_strategy
                         )
                     

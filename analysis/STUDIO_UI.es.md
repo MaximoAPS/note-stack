@@ -20,22 +20,49 @@ La **Studio UI** proporciona un flujo de trabajo de extremo a extremo para crear
 
 **Resultado:** Una pista "Solo" se añade a la canción con la melodía generada.
 
-### 2. Añadir Pistas AI
+### 2. Generar Bajo de Patrón (Pattern → Base)
+
+**Pattern → Base** genera líneas de bajo que siguen una secuencia ordenada específica. A diferencia de "AI Fill Bass" (que extrae notas graves arbitrarias de donantes), Pattern → Base restringe el bajo para seguir tu secuencia de dígitos en orden.
+
+**Pasos:**
+1. Introduce el patrón: `3-1-4-1-5` (dígitos de Pi)
+2. Elige el modo:
+   - **Offset**: Cada dígito + offset (ej. 3+10=13, 1+10=11, 4+10=14...)
+   - **Tonic+Scale**: Mapea dígitos a grados de escala en octava baja (ej. tónica E0=16, cromática)
+3. Establece rango de bajo: min=28 (E1), max=42 (F#2)
+4. Selecciona MIDIs de estilo (Chopin + Liszt) para aprender duraciones
+5. Haz clic en **"🎸 Generar Bajo de Patrón"**
+
+**Resultado:** Una pista "Base" se añade con el patrón `13-11-14-11-15` y ritmos aprendidos.
+
+**Casos de uso:**
+- Bajo de Pi: `3-1-4-1-5-9-2-6-5-3-5-8-9-7-9`
+- Bajo de Fibonacci: `1-1-2-3-5-8`
+- Secuencias personalizadas: `5-3-1-2-4-6-5-3`
+
+La IA asigna duraciones basadas en los patrones de salto en tus MIDIs de estilo, creando una línea de bajo musicalmente fluida que sigue tu secuencia de tonos exacta.
+
+**Nota:** Los dígitos son grados de patrón/offsets, **no** teclas crudas de piano 1-5. Ejemplo: Pi `31415` con offset 10 → bajo con teclas 13, 11, 14, 11, 15.
+
+### 3. Añadir Pistas AI
 
 En el **Tracks Studio**, cada pista tiene botones de **AI Fill Track** para generar contenido basado en otras pistas:
 
-- **Bass Line** (teclas 1-28): Extrae notas graves de otras pistas
+- **Bass Line** (teclas 1-28): Extrae notas graves de otras pistas (arbitrario, no ordenado por patrón)
 - **Chord Base** (teclas 29-52): Extrae agrupaciones de notas / acordes
 - **Adorn Pluck** (teclas 45-72): Crea patrones decorativos dispersos
 - **Harmony Line** (teclas 45-72): Armoniza la melodía con transposición de intervalos
 
 **Ejemplo:**
 1. Abre la pista Solo generada
-2. Haz clic en "Bass Line" → Genera una pista Base de bajo
-3. Haz clic en "Chord Base" → Genera una pista Base de acordes
-4. Haz clic en "Adorn Pluck" → Genera ornamentación
+2. Haz clic en "Bass Line" → Genera una pista Base de bajo (extrae notas graves arbitrarias)
+3. **O** usa "Pattern → Base" arriba para bajo ordenado por secuencia de dígitos
+4. Haz clic en "Chord Base" → Genera una pista Base de acordes
+5. Haz clic en "Adorn Pluck" → Genera ornamentación
 
-### 3. Editar Notas
+**Nota:** Para líneas de bajo que siguen una secuencia de dígitos específica en orden (como Pi `3-1-4-1-5`), usa **Pattern → Base** en lugar de AI Fill Bass.
+
+### 4. Editar Notas
 
 Cada pista ahora tiene un **Editor de Badges de Clusters** que muestra las notas como badges horizontales:
 
@@ -92,7 +119,7 @@ La **tabla de datos interactiva** tradicional sigue disponible en un expansor "�
 
 Usa el editor de badges para flujo rápido y el editor de tabla para control preciso de timing y velocity.
 
-### 4. Configurar FX por Pista
+### 5. Configurar FX por Pista
 
 Cada pista tiene controles de efectos:
 
@@ -101,7 +128,7 @@ Cada pista tiene controles de efectos:
 - **Hold** (0.1-5.0s): Duración de sustain (0.5 = corto, 2.0 = largo)
 - **Mute**: Silencia la pista temporalmente
 
-### 5. Reproducir y Exportar
+### 6. Reproducir y Exportar
 
 - **▶ Play**: Sintetiza y reproduce la canción completa
 - **Download WAV**: Exporta audio estéreo de 16-bit 44.1kHz
@@ -149,11 +176,12 @@ El motor de síntesis implementa el modelo de timbre de piano del gráfico de De
 ## Consejos de Uso
 
 1. **Comienza simple**: Genera una Number Melody y escúchala antes de añadir más pistas
-2. **Selección de estilo múltiple**: Usa 3+ MIDIs de demostración para patrones de duración más ricos
-3. **pair_mod es mejor**: El modo `pair_mod` con módulo 12 da la mayor variación de tono
-4. **Roles de pista**: Mantén 1-2 pistas Solo, 2-3 pistas Base, 1-2 pistas Adorn para mezcla equilibrada
-5. **Edita después de generar**: Los generadores AI son heurísticos V1; ajusta notas manualmente para perfeccionar
-6. **Exporta temprano y a menudo**: Descarga WAV/MIDI después de cada iteración para comparar versiones
+2. **Pattern → Base para secuencias ordenadas**: Si quieres un bajo que siga Pi `3-1-4-1-5` exactamente, usa Pattern → Base, no AI Fill Bass
+3. **Selección de estilo múltiple**: Usa 3+ MIDIs de demostración para patrones de duración más ricos
+4. **pair_mod es mejor**: El modo `pair_mod` con módulo 12 da la mayor variación de tono
+5. **Roles de pista**: Mantén 1-2 pistas Solo, 2-3 pistas Base, 1-2 pistas Adorn para mezcla equilibrada
+6. **Edita después de generar**: Los generadores AI son heurísticos V1; ajusta notas manualmente para perfeccionar
+7. **Exporta temprano y a menudo**: Descarga WAV/MIDI después de cada iteración para comparar versiones
 
 ## Limitaciones Actuales (Fase 1)
 

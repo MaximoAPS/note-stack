@@ -15,7 +15,7 @@ from collections import defaultdict
 from notes import Song, Track, Note
 from synth import synthesize_song, export_wav
 from midi_io import load_midi, export_midi
-from number_melody import generate_number_melody, SCALE_MODES
+from number_melody import generate_number_melody, generate_pattern_bass, SCALE_MODES
 from pattern_generators import PATTERN_GENERATORS
 
 
@@ -453,6 +453,184 @@ def main():
         
         except Exception as e:
             st.error(f"Error generating melody: {str(e)}")
+    
+    st.divider()
+    
+    # ========== PATTERN → BASE PANEL ==========
+    st.subheader("🎸 Pattern → Base — Ordered bass from digit pattern")
+    st.caption("Enter a pattern sequence (e.g., Pi digits `3-1-4-1-5`) to generate a bass line "
+              "with those pitches in order • AI assigns durations from style MIDIs • "
+              "Digits are degrees/offsets, not literal piano keys 1-5")
+    st.caption("Los dígitos son grados de patrón, no teclas crudas 1-5 • "
+              "Ejemplo Pi `31415` → bajo con esos tonos relativos en orden")
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        pattern_string = st.text_input(
+            "Pattern String / Cadena de Patrón",
+            value="3-1-4-1-5",
+            help="Enter digit sequence (e.g., 3-1-4-1-5 or 3,1,4,1,5) | "
+                 "Introduce secuencia de dígitos"
+        )
+    
+    with col2:
+        pattern_mode = st.radio(
+            "Mode / Modo",
+            options=["offset", "tonic_scale"],
+            index=0,
+            help="offset: digit + offset | tonic_scale: tonic + scale degree in low octave"
+        )
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if pattern_mode == "offset":
+            bass_offset = st.number_input(
+                "Bass Offset",
+                min_value=0,
+                max_value=40,
+                value=10,
+                help="Add this to each digit (e.g., 3 + 10 = key 13)"
+            )
+        else:
+            bass_tonic = st.number_input(
+                "Bass Tonic",
+                min_value=1,
+                max_value=40,
+                value=16,
+                help="Root key in bass register (16 = E0, 28 = E1)"
+            )
+            bass_scale_mode = st.selectbox(
+                "Scale Mode",
+                options=list(SCALE_MODES.keys()),
+                index=4,  # chromatic
+                help="Scale mode for tonic_scale"
+            )
+    
+    with col2:
+        bass_min_key = st.number_input(
+            "Min Key",
+            min_value=1,
+            max_value=88,
+            value=28,
+            help="Lowest bass note allowed (28 = E1)"
+        )
+    
+    with col3:
+        bass_max_key = st.number_input(
+            "Max Key",
+            min_value=1,
+            max_value=88,
+            value=42,
+            help="Highest bass note allowed (42 = F#2)"
+        )
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        # Style sources
+        demos_dir = Path("demos")
+        demo_files = []
+        if demos_dir.exists():
+            demo_files = sorted([f.stem for f in demos_dir.glob("*.mid")])
+        
+        selected_bass_styles = st.multiselect(
+            "Style MIDIs / MIDIs de estilo",
+            demo_files,
+            default=demo_files[:2] if len(demo_files) >= 2 else demo_files,
+            help="Select MIDIs to learn durations | Selecciona MIDIs para aprender duraciones",
+            key="pattern_bass_styles"
+        )
+    
+    with col2:
+        bass_duration_strategy = st.radio(
+            "Duration / Duración",
+            options=["mode", "median", "random"],
+            index=0,
+            help="How to pick duration: mode (most common)",
+            key="pattern_bass_duration"
+        )
+    
+    with col3:
+        use_bass_jump_predict = st.checkbox(
+            "Use Jump Predict",
+            value=False,
+            help="Use jump model for octave/jump within bass range (advanced)",
+            key="pattern_bass_jump"
+        )
+        
+        pattern_bass_bpm = st.number_input(
+            "BPM",
+            min_value=40,
+            max_value=240,
+            value=96,
+            help="Tempo",
+            key="pattern_bass_bpm"
+        )
+    
+    if st.button("🎸 Generate Pattern Bass / Generar Bajo de Patrón", type="primary", use_container_width=True):
+        try:
+            if not selected_bass_styles:
+                st.error("⚠️ Select at least one style MIDI / Selecciona al menos un MIDI de estilo")
+            else:
+                # Load style tracks
+                style_tracks = []
+                for demo_name in selected_bass_styles:
+                    demo_path = demos_dir / f"{demo_name}.mid"
+                    demo_song = load_midi(str(demo_path))
+                    style_tracks.extend(demo_song.tracks)
+                
+                # Generate pattern bass
+                with st.spinner("Generating pattern bass... / Generando bajo de patrón..."):
+                    if pattern_mode == "offset":
+                        bass_track = generate_pattern_bass(
+                            pattern_string=pattern_string,
+                            style_tracks=style_tracks,
+                            bpm=pattern_bass_bpm,
+                            mode="offset",
+                            bass_offset=bass_offset,
+                            min_key=bass_min_key,
+                            max_key=bass_max_key,
+                            duration_strategy=bass_duration_strategy,
+                            use_jump_predict=use_bass_jump_predict
+                        )
+                    else:
+                        bass_track = generate_pattern_bass(
+                            pattern_string=pattern_string,
+                            style_tracks=style_tracks,
+                            bpm=pattern_bass_bpm,
+                            mode="tonic_scale",
+                            tonic=bass_tonic,
+                            scale_mode=bass_scale_mode,
+                            min_key=bass_min_key,
+                            max_key=bass_max_key,
+                            duration_strategy=bass_duration_strategy,
+                            use_jump_predict=use_bass_jump_predict
+                        )
+                
+                # Update song BPM
+                st.session_state.song.bpm = pattern_bass_bpm
+                
+                # Mark as Base track
+                bass_track.name = f"🎸 Base: {bass_track.name}"
+                
+                # Add to song
+                st.session_state.song.tracks.append(bass_track)
+                
+                # Show key range
+                if bass_track.notes:
+                    keys = [n.key for n in bass_track.notes]
+                    key_range = f"{min(keys)}-{max(keys)}"
+                else:
+                    key_range = "N/A"
+                
+                st.success(f"✓ Generated {len(bass_track.notes)} bass notes "
+                         f"(key range: {key_range}). Track added as Base.")
+                st.rerun()
+        
+        except Exception as e:
+            st.error(f"Error generating pattern bass: {str(e)}")
     
     st.divider()
     

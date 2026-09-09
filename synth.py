@@ -1,4 +1,11 @@
-"""Piano synthesis based on Desmos 'Piano Song' graph."""
+"""Piano synthesis based on Desmos 'Piano Song' graph.
+
+Recent changes (high whistle fix):
+- Added high_key_harmonic_rolloff(): progressive harmonic darkening on keys >55
+- Added key_delay_gain(): fades delay gain from 0.4 → 0 for keys 55-68
+- Adaptive master LP: cutoff lowers by up to 2 kHz when high keys present (60+)
+- Core Desmos formulas (intensity, attack, Box-Muller) unchanged
+"""
 
 import numpy as np
 from typing import List, Tuple
@@ -20,6 +27,26 @@ def harmonic_intensity(h: int) -> float:
     return 1 / (1.24729 * h**1.5 + 1)
 
 
+def high_key_harmonic_rolloff(key: int, harmonic_num: int) -> float:
+    """
+    Additional gain rolloff for harmonics on high keys to reduce whistle.
+    Applied on top of Desmos intensity formula.
+    
+    Progressively attenuates higher harmonics on keys above 55 (G4).
+    At key 72 (C5), harmonics 32+ are reduced by ~30-50%.
+    """
+    if key <= 55:
+        return 1.0  # No additional rolloff for mid/low keys
+    
+    # For keys above 55, apply progressive harmonic darkening
+    key_excess = key - 55  # 0 at G4, increases with higher keys
+    harmonic_excess = max(0, harmonic_num - 16)  # Start rolling off above H=16
+    
+    # Compound attenuation: higher keys + higher harmonics = more reduction
+    rolloff = 1.0 - (key_excess * harmonic_excess * 0.0015)
+    return max(0.5, rolloff)  # Never attenuate more than 50%
+
+
 def key_decay_scale(key: int) -> float:
     """
     Key-dependent decay scaling like a real piano.
@@ -28,6 +55,22 @@ def key_decay_scale(key: int) -> float:
     """
     scale = 2 ** ((key - 40) / 18)
     return np.clip(scale, 0.55, 3.5)
+
+
+def key_delay_gain(key: int) -> float:
+    """
+    Key-scaled delay gain to prevent whistle/comb artifacts on high notes.
+    Full 0.4 gain below key 55 (G4), fades to 0 by key 68 (G#5).
+    High keys are naturally brighter and don't need delay reinforcement.
+    """
+    if key <= 55:
+        return 0.4  # Full delay gain for mid/low keys
+    elif key >= 68:
+        return 0.0  # No delay for very high keys
+    else:
+        # Linear fade from 0.4 to 0 over keys 55-68
+        fade = (68 - key) / (68 - 55)
+        return 0.4 * fade
 
 
 def harmonic_detune_cents(track_idx: int, key: int, start_beat: float, harmonic_num: int) -> float:
@@ -181,6 +224,10 @@ def synthesize_note(key: int, duration_seconds: float, track_idx: int, start_bea
         
         h = H - 1  # 0-based for intensity formula
         harm_intensity = harmonic_intensity(h) * intensity * vel_scale
+        
+        # Apply additional high-key rolloff to reduce whistle on bright notes
+        harm_intensity *= high_key_harmonic_rolloff(key, H)
+        
         decay_rate = box_muller_decay(track_idx, key, start_beat, H)
         
         # Compute envelope (vectorized for speed)
@@ -242,15 +289,18 @@ def synthesize_track(track: Track, bpm: float, track_idx: int, total_beats: floa
         
         signal[start_sample:end_sample] += note_signal
         
-        # Add delay voice if enabled (at 0.4 gain to avoid comb filtering)
+        # Add delay voice if enabled (key-scaled gain to prevent high whistle)
         if track.delay:
             delay_sec = 30.0 / 160.0  # 30/160 seconds
             delay_samples = int(delay_sec * SAMPLE_RATE)
             delay_start = start_sample + delay_samples
             delay_end = delay_start + len(note_signal)
             
-            if delay_start < num_samples:
-                delay_signal = note_signal * 0.4  # Reduce delay gain
+            # Scale delay gain by key: fade out for high keys to avoid comb artifacts
+            delay_gain = key_delay_gain(note.key)
+            
+            if delay_start < num_samples and delay_gain > 0:
+                delay_signal = note_signal * delay_gain
                 if delay_end > num_samples:
                     delay_signal = delay_signal[:num_samples - delay_start]
                     delay_end = num_samples
@@ -286,6 +336,7 @@ def synthesize_song(song: Song) -> Tuple[np.ndarray, int]:
     mixed_mono = np.zeros(num_samples)
     
     # Mix all unmuted tracks to mono (expand loops first)
+    max_key_in_song = 0  # Track highest key for adaptive filtering
     for track_idx, track in enumerate(song.tracks):
         if not track.mute:
             # Expand looped track if loop_enabled
@@ -298,9 +349,22 @@ def synthesize_song(song: Song) -> Tuple[np.ndarray, int]:
             elif len(track_signal) > num_samples:
                 track_signal = track_signal[:num_samples]
             mixed_mono += track_signal
+            
+            # Track max key for adaptive filtering
+            if expanded_track.notes:
+                track_max = max(note.key for note in track.notes)
+                max_key_in_song = max(max_key_in_song, track_max)
     
-    # Apply soft master lowpass filter (~13 kHz)
-    mixed_mono = apply_lowpass_filter(mixed_mono, cutoff_hz=13000)
+    # Apply adaptive master lowpass: lower cutoff when high keys present
+    # Keys 60+ (C4+) get progressively lower cutoff to tame brightness
+    if max_key_in_song >= 60:
+        # Reduce cutoff by up to 2 kHz for very high content
+        cutoff_reduction = min(2000, (max_key_in_song - 60) * 100)
+        master_cutoff = 13000 - cutoff_reduction
+    else:
+        master_cutoff = 13000  # Default for mid/low content
+    
+    mixed_mono = apply_lowpass_filter(mixed_mono, cutoff_hz=master_cutoff)
     
     # Create Haas stereo effect (~15ms delay on right channel)
     haas_delay_ms = 15

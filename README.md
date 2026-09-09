@@ -22,29 +22,50 @@ Note Stack V1 is a Streamlit web application for composing and synthesizing pian
 
 The **Studio UI** provides an end-to-end workflow for creating expressive piano compositions:
 
-1. **Number Melody Generator** — Paste digit sequences (Pi, Fibonacci, dates) and transform them into melodies
-   - **pair_mod chunking**: Digit pairs (00-99) mapped via modulus for rich pitch variation
-   - **Multi-style training**: Learn duration patterns from multiple demo MIDIs
-   - **Tonic/mode/octave controls**: Customize scale and range
-   - Generates a "Solo" track ready to play or edit
+1. **Style / Training MIDI Library** (NEW) — Global session-wide style pack at the top
+   - Upload multiple MIDIs + pick demos into a session style pack
+   - Shared by Number Melody, Pattern→Base, AI fills, jump_predict, etc.
+   - Shows loaded MIDIs with track counts
+   - Clear / remove entries individually or all at once
+   - Tools fall back to MIDI-GPT / heuristics / neutral defaults if empty
 
-2. **Pattern → Base Generator** — Create ordered bass lines from digit patterns
+2. **Number Sequence → Solo / Melody** — Prominent digit input and solo generation
+   - Paste digit sequences (Pi, Fibonacci, dates) right at the top
+   - Generate Solo melody OR upload a solo MIDI
+   - **pair_mod chunking**: Digit pairs (00-99) mapped via modulus for rich pitch variation
+   - **Multi-style training**: Uses global style pack (or override in advanced options)
+   - **Tonic/mode/BPM controls**: Customize scale, range, and tempo
+   - **Advanced options in expander**: Chunking, register, key range, style override
+   - Generates a "🎵 Solo" track ready to play or edit
+
+3. **Pattern → Base Generator** — Create ordered bass lines from digit patterns
    - **Ordered pattern mapping**: Digits like "3-1-4-1-5" become bass notes in that exact sequence
    - **Offset or tonic+scale modes**: Map digits as simple offsets (3+10=13) or scale degrees
-   - **AI duration learning**: Learns rhythm from style MIDIs, same as Number Melody
+   - **AI duration learning**: Uses global style pack for rhythm patterns
    - **Bass register control**: Set min/max keys (e.g., 28-42 for typical bass range)
-   - Generates a "Base" track distinct from arbitrary AI Fill Bass
+   - Generates a "🎸 Base" track distinct from arbitrary AI Fill Bass
 
-3. **Tracks Studio** — Add, edit, and generate AI tracks
+4. **Tracks Studio** — Add, edit, and generate AI tracks
    - **Track roles**: Mark tracks as Solo (melody), Base (bass/chords), or Adorn (decoration)
+   - **Loop tracks** (NEW): Enable 🔁 Loop for Base tracks to repeat pattern across timeline
+     - Loop length in beats (or 0 for "loop until song end")
+     - When playing/exporting, track notes repeat automatically
    - **AI Fill Track** buttons: Generate Bass Line (keys 1-28), Chord Base (keys 29-52), Adorn Pluck, or Harmony Line from existing tracks
-   - **Per-track FX**: Intensity (harmonic multiplier), Delay (30/160s echo), Hold (sustain duration)
+   - **FX Calibration** (IMPROVED): Clear Intensity/Delay/Hold controls with sensible ranges
+     - Intensity: 1.0=melody, 2.0=bass (captions show guidance)
+     - Delay: 30/160s echo toggle
+     - Hold: 0.5s=short, 2.0s=long sustain
+     - 🔄 Piano Defaults button: Reset to I=1.0, Hold=0.8s, Delay=On
    - **Cluster Badge Editor**: Edit notes as horizontal badges showing simultaneous keys + duration chips
+   - **Insert Silence / Rests** (NEW): Add timed silences between notes
+     - Insert rest at end or at specific beat position
+     - Shifts later notes to create gaps
+     - Rests are gaps (no fake notes)
    - **Paste cluster strings**: Import note sequences like `35-35,36-38-35` (dash separates clusters, comma separates keys)
    - **Advanced table editor**: Full data table available in expander for precise edits
    - **Mute/solo**: Isolate tracks during composition
 
-3. **One-Click Play** — Synthesize and download WAV/MIDI instantly
+5. **One-Click Play** — Synthesize and download WAV/MIDI instantly
 
 ### Number Melody
 

@@ -3,6 +3,7 @@
 import numpy as np
 from typing import List, Tuple
 from notes import Song, Track, Note
+from track_helpers import expand_looped_track
 
 
 SAMPLE_RATE = 44100
@@ -284,10 +285,13 @@ def synthesize_song(song: Song) -> Tuple[np.ndarray, int]:
     num_samples = int((duration_seconds + 3.5) * SAMPLE_RATE)
     mixed_mono = np.zeros(num_samples)
     
-    # Mix all unmuted tracks to mono
+    # Mix all unmuted tracks to mono (expand loops first)
     for track_idx, track in enumerate(song.tracks):
         if not track.mute:
-            track_signal = synthesize_track(track, song.bpm, track_idx, total_beats)
+            # Expand looped track if loop_enabled
+            expanded_track = expand_looped_track(track, total_beats)
+            
+            track_signal = synthesize_track(expanded_track, song.bpm, track_idx, total_beats)
             # Ensure same length
             if len(track_signal) < num_samples:
                 track_signal = np.pad(track_signal, (0, num_samples - len(track_signal)))

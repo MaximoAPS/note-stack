@@ -1029,39 +1029,114 @@ def main():
                     if track.loop_enabled:
                         st.caption("💡 Track will repeat its pattern across the song timeline")
                 
-                # FX Calibration (clearer layout with piano defaults)
-                st.write("**🎛️ FX Calibration**")
+                # FX Calibration (add effects on demand)
+                st.write("**🎛️ FX / Efectos**")
                 
-                col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+                # Initialize active effects for this track in session state
+                if f"active_fx_{track_idx}" not in st.session_state:
+                    st.session_state[f"active_fx_{track_idx}"] = set()
+                
+                active_fx = st.session_state[f"active_fx_{track_idx}"]
+                
+                # Add effect button and selector
+                col1, col2, col3 = st.columns([1, 1, 2])
                 
                 with col1:
-                    track.intensity = st.number_input("Intensity", 0.1, 5.0, 
-                                                     track.intensity, 0.1, 
-                                                     key=f"intensity_{track_idx}",
-                                                     help="Harmonic multiplier (1.0=melody, 2.0=bass/rich)")
-                    st.caption("1.0=melody, 2.0=bass")
+                    available_effects = []
+                    if "intensity" not in active_fx:
+                        available_effects.append("Intensity")
+                    if "delay" not in active_fx:
+                        available_effects.append("Delay")
+                    if "hold" not in active_fx:
+                        available_effects.append("Hold")
+                    
+                    if available_effects:
+                        effect_to_add = st.selectbox(
+                            "Select effect",
+                            available_effects,
+                            key=f"fx_select_{track_idx}",
+                            label_visibility="collapsed"
+                        )
                 
                 with col2:
-                    track.delay = st.checkbox("Delay", track.delay, 
-                                             key=f"delay_{track_idx}",
-                                             help="Enable 30/160s delay voice")
-                    st.caption("Echo at 30/160s")
+                    if available_effects and st.button("➕ Agregar efecto / Add effect", key=f"add_fx_{track_idx}", use_container_width=True):
+                        # Add the selected effect
+                        effect_key = effect_to_add.lower()
+                        active_fx.add(effect_key)
+                        st.session_state[f"active_fx_{track_idx}"] = active_fx
+                        st.rerun()
                 
                 with col3:
-                    track.hold_seconds = st.number_input("Hold (s)", 0.1, 5.0, 
-                                                        track.hold_seconds, 0.1,
-                                                        key=f"hold_{track_idx}",
-                                                        help="Note sustain duration")
-                    st.caption("0.5=short, 2.0=long")
-                
-                with col4:
                     if st.button("🔄 Piano Defaults", key=f"fx_reset_{track_idx}",
-                               help="Reset FX to piano defaults: I=1.0, hold=0.8s, delay=on for melody"):
+                               help="Reset FX to piano defaults: I=1.0, hold=0.8s, delay=on",
+                               use_container_width=True):
+                        # Set piano defaults
                         track.intensity = 1.0
                         track.hold_seconds = 0.8
-                        track.delay = True  # Piano default has delay for melody
-                        st.success("✓ Reset to piano FX")
+                        track.delay = True
+                        # Activate all effects to show piano defaults
+                        st.session_state[f"active_fx_{track_idx}"] = {"intensity", "delay", "hold"}
+                        st.success("✓ Piano defaults set")
                         st.rerun()
+                
+                # Display active effects with their controls
+                if active_fx:
+                    st.caption(f"**Active effects:** {', '.join(sorted(active_fx)).title()}")
+                    
+                    # Intensity effect
+                    if "intensity" in active_fx:
+                        col1, col2 = st.columns([3, 1])
+                        with col1:
+                            track.intensity = st.slider(
+                                "Intensity (harmonic multiplier)",
+                                0.1, 5.0, 
+                                track.intensity, 0.1,
+                                key=f"intensity_{track_idx}",
+                                help="1.0=melody, 2.0=bass/rich"
+                            )
+                            st.caption("1.0=melody, 2.0=bass")
+                        with col2:
+                            if st.button("🗑️", key=f"remove_intensity_{track_idx}", help="Remove Intensity effect"):
+                                active_fx.discard("intensity")
+                                st.session_state[f"active_fx_{track_idx}"] = active_fx
+                                st.rerun()
+                    
+                    # Delay effect
+                    if "delay" in active_fx:
+                        col1, col2 = st.columns([3, 1])
+                        with col1:
+                            track.delay = st.checkbox(
+                                "Delay (30/160s echo)",
+                                track.delay,
+                                key=f"delay_{track_idx}",
+                                help="Enable 30/160s delay voice"
+                            )
+                            st.caption("Echo at 30/160s")
+                        with col2:
+                            if st.button("🗑️", key=f"remove_delay_{track_idx}", help="Remove Delay effect"):
+                                active_fx.discard("delay")
+                                st.session_state[f"active_fx_{track_idx}"] = active_fx
+                                st.rerun()
+                    
+                    # Hold effect
+                    if "hold" in active_fx:
+                        col1, col2 = st.columns([3, 1])
+                        with col1:
+                            track.hold_seconds = st.slider(
+                                "Hold (sustain duration in seconds)",
+                                0.1, 5.0,
+                                track.hold_seconds, 0.1,
+                                key=f"hold_{track_idx}",
+                                help="Note sustain duration"
+                            )
+                            st.caption("0.5=short, 0.8=piano, 2.0=long")
+                        with col2:
+                            if st.button("🗑️", key=f"remove_hold_{track_idx}", help="Remove Hold effect"):
+                                active_fx.discard("hold")
+                                st.session_state[f"active_fx_{track_idx}"] = active_fx
+                                st.rerun()
+                else:
+                    st.caption("💡 No effects active. Add effects above to calibrate this track's sound.")
                 
                 # AI Fill buttons
                 st.write("**🤖 AI Fill Track** (V1 heuristics)")

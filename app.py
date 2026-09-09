@@ -331,6 +331,184 @@ def main():
     if 'song' not in st.session_state:
         st.session_state.song = Song(bpm=96, tracks=[])
     
+    # Initialize style pack session state
+    if 'style_pack' not in st.session_state:
+        st.session_state.style_pack = []  # List of (name, midi_path) tuples
+    if 'trained_duration_model' not in st.session_state:
+        st.session_state.trained_duration_model = None
+    if 'trained_jump_model' not in st.session_state:
+        st.session_state.trained_jump_model = None
+    if 'trained_style_tracks' not in st.session_state:
+        st.session_state.trained_style_tracks = []
+    if 'training_timestamp' not in st.session_state:
+        st.session_state.training_timestamp = None
+    
+    # ========== STYLE MIDI LIBRARY (PROMINENT) ==========
+    st.subheader("🎼 Style MIDI Library — Load & train optional AI models")
+    st.caption("**Upload MIDIs freely → Train once** • Number Melody & Pattern generators use trained models if available, else fallback to heuristics")
+    st.caption("**Carga MIDIs libremente → Entrena una vez** • Si no entrenas, los generadores usan heurísticas")
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        # File uploader (multi-file)
+        uploaded_files = st.file_uploader(
+            "Upload Style MIDIs / Subir MIDIs de estilo",
+            type=["mid", "midi"],
+            accept_multiple_files=True,
+            key="style_upload_multi",
+            help="Upload one or more MIDI files | Sube uno o más archivos MIDI"
+        )
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("➕ Add uploads to pack / Agregar archivos al pack", width='stretch', key="add_uploads"):
+                if uploaded_files:
+                    added_count = 0
+                    for uploaded_file in uploaded_files:
+                        # Check if already in pack (deduplicate by name)
+                        existing_names = [name for name, _ in st.session_state.style_pack]
+                        if uploaded_file.name not in existing_names:
+                            # Save to temp file
+                            with tempfile.NamedTemporaryFile(delete=False, suffix=".mid") as tmp_file:
+                                tmp_file.write(uploaded_file.read())
+                                tmp_path = tmp_file.name
+                            
+                            st.session_state.style_pack.append((uploaded_file.name, tmp_path))
+                            added_count += 1
+                    
+                    if added_count > 0:
+                        st.success(f"✓ Added {added_count} MIDI(s) to pack")
+                        st.rerun()
+                    else:
+                        st.info("All selected files already in pack")
+                else:
+                    st.warning("No files selected")
+        
+        # Demo selector
+        demos_dir = Path("demos")
+        demo_files = []
+        if demos_dir.exists():
+            demo_files = sorted([f.stem for f in demos_dir.glob("*.mid")])
+        
+        selected_demos = st.multiselect(
+            "Classical Demos / Demos clásicos",
+            demo_files,
+            default=[],
+            help="Select classical demos to add | Selecciona demos clásicos para agregar",
+            key="style_demo_selector"
+        )
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("➕ Add selected demos / Agregar demos seleccionados", width='stretch', key="add_demos"):
+                if selected_demos:
+                    added_count = 0
+                    for demo_name in selected_demos:
+                        existing_names = [name for name, _ in st.session_state.style_pack]
+                        if demo_name not in existing_names:
+                            demo_path = str(demos_dir / f"{demo_name}.mid")
+                            st.session_state.style_pack.append((demo_name, demo_path))
+                            added_count += 1
+                    
+                    if added_count > 0:
+                        st.success(f"✓ Added {added_count} demo(s) to pack")
+                        st.rerun()
+                    else:
+                        st.info("All selected demos already in pack")
+                else:
+                    st.warning("No demos selected")
+        
+        with col_b:
+            if st.button("⭐ Add all classical demos / Agregar todos los demos", width='stretch', key="add_all_demos"):
+                if demo_files:
+                    added_count = 0
+                    for demo_name in demo_files:
+                        existing_names = [name for name, _ in st.session_state.style_pack]
+                        if demo_name not in existing_names:
+                            demo_path = str(demos_dir / f"{demo_name}.mid")
+                            st.session_state.style_pack.append((demo_name, demo_path))
+                            added_count += 1
+                    
+                    if added_count > 0:
+                        st.success(f"✓ Added {added_count} classical demo(s) to pack")
+                        st.rerun()
+                    else:
+                        st.info("All demos already in pack")
+                else:
+                    st.warning("No demos available")
+    
+    with col2:
+        # Training status and controls
+        st.write("**Training Status:**")
+        
+        if st.session_state.training_timestamp:
+            trained_count = len(st.session_state.trained_style_tracks)
+            st.success(f"✓ Trained on {trained_count} MIDI(s)")
+            st.caption(f"Models: duration + jump")
+        else:
+            st.info("⚪ Not trained")
+            st.caption("Generators will use fallbacks")
+        
+        if st.button("🧠 Train models from style pack", 
+                    type="primary", 
+                    width='stretch',
+                    disabled=len(st.session_state.style_pack) == 0,
+                    key="train_models"):
+            if st.session_state.style_pack:
+                with st.spinner("Training duration & jump models..."):
+                    # Load all MIDIs in pack
+                    style_tracks = []
+                    for name, midi_path in st.session_state.style_pack:
+                        try:
+                            song = load_midi(midi_path)
+                            style_tracks.extend(song.tracks)
+                        except Exception as e:
+                            st.warning(f"⚠️ Could not load {name}: {str(e)}")
+                    
+                    if style_tracks:
+                        # Build models
+                        from number_melody import build_duration_model, build_jump_model
+                        
+                        st.session_state.trained_duration_model = build_duration_model(style_tracks)
+                        st.session_state.trained_jump_model = build_jump_model(style_tracks)
+                        st.session_state.trained_style_tracks = style_tracks
+                        st.session_state.training_timestamp = pd.Timestamp.now()
+                        
+                        st.success(f"✓ Trained on {len(style_tracks)} track(s) from {len(st.session_state.style_pack)} MIDI(s)")
+                        st.rerun()
+                    else:
+                        st.error("No valid tracks found in pack")
+            else:
+                st.warning("Style pack is empty")
+        
+        if st.button("🗑️ Clear pack", width='stretch', key="clear_pack"):
+            # Clean up temp files
+            for name, midi_path in st.session_state.style_pack:
+                if midi_path.startswith("/tmp/"):
+                    try:
+                        os.unlink(midi_path)
+                    except:
+                        pass
+            
+            st.session_state.style_pack = []
+            st.session_state.trained_duration_model = None
+            st.session_state.trained_jump_model = None
+            st.session_state.trained_style_tracks = []
+            st.session_state.training_timestamp = None
+            st.success("✓ Cleared pack and models")
+            st.rerun()
+    
+    # Display current pack
+    if st.session_state.style_pack:
+        st.write(f"**Current pack ({len(st.session_state.style_pack)} MIDIs):**")
+        pack_names = ", ".join([name for name, _ in st.session_state.style_pack])
+        st.caption(pack_names)
+    else:
+        st.caption("*No MIDIs in pack yet*")
+    
+    st.divider()
+    
     # ========== NUMBER MELODY PANEL (PROMINENT) ==========
     st.subheader("🔢 Number Melody — Transform digits into music")
     st.caption("Paste Pi, Fibonacci, dates → Generate melody with durations learned from style MIDIs • "
@@ -444,25 +622,10 @@ def main():
             key="melody_octave_range"
         )
     
-    # Style sources
-    col1, col2 = st.columns([2, 1])
+    # Duration and BPM settings
+    col1, col2 = st.columns(2)
     
     with col1:
-        demos_dir = Path("demos")
-        demo_files = []
-        if demos_dir.exists():
-            demo_files = sorted([f.stem for f in demos_dir.glob("*.mid")])
-        
-        selected_demos = st.multiselect(
-            "Style MIDIs (multi-select for richer patterns) / MIDIs de estilo",
-            demo_files,
-            default=demo_files[:3] if len(demo_files) >= 3 else demo_files,
-            help="Select multiple MIDIs to learn duration patterns | "
-                 "Selecciona múltiples MIDIs para aprender patrones",
-            key="melody_selected_demos"
-        )
-    
-    with col2:
         duration_strategy = st.radio(
             "Duration / Duración",
             options=["mode", "median", "random"],
@@ -471,7 +634,8 @@ def main():
                  "Cómo elegir duración: mode (más común)",
             key="melody_duration_strategy"
         )
-        
+    
+    with col2:
         melody_bpm = st.number_input(
             "BPM",
             min_value=40,
@@ -483,32 +647,29 @@ def main():
     
     if st.button("🎵 Generate Number Melody / Generar Melodía Numérica", type="primary", width='stretch'):
         try:
-            if not selected_demos:
-                st.error("⚠️ Select at least one style MIDI / Selecciona al menos un MIDI de estilo")
-            else:
-                # Load style tracks
-                style_tracks = []
-                for demo_name in selected_demos:
-                    demo_path = demos_dir / f"{demo_name}.mid"
-                    demo_song = load_midi(str(demo_path))
-                    style_tracks.extend(demo_song.tracks)
+            # Generate melody
+            with st.spinner("Generating melody... / Generando melodía..."):
+                # Use trained models if available, else fallback to empty style_tracks
+                # (generate_number_melody will use fixed durations as fallback)
+                style_tracks = st.session_state.trained_style_tracks if st.session_state.trained_style_tracks else []
                 
-                # Generate melody
-                with st.spinner("Generating melody... / Generando melodía..."):
-                    melody_track = generate_number_melody(
-                        digit_string=digit_string,
-                        tonic=tonic,
-                        mode=mode,
-                        style_tracks=style_tracks,
-                        bpm=melody_bpm,
-                        octave_range=octave_range,
-                        chunk_mode=chunk_mode,
-                        modulus=modulus,
-                        min_key=min_key,
-                        max_key=max_key,
-                        register_mode=register_mode,
-                        duration_strategy=duration_strategy
-                    )
+                if not style_tracks:
+                    st.info("ℹ️ No trained models. Using heuristic durations. Train models in Style MIDI Library for AI patterns.")
+                
+                melody_track = generate_number_melody(
+                    digit_string=digit_string,
+                    tonic=tonic,
+                    mode=mode,
+                    style_tracks=style_tracks,
+                    bpm=melody_bpm,
+                    octave_range=octave_range,
+                    chunk_mode=chunk_mode,
+                    modulus=modulus,
+                    min_key=min_key,
+                    max_key=max_key,
+                    register_mode=register_mode,
+                    duration_strategy=duration_strategy
+                )
                 
                 # Update song BPM
                 st.session_state.song.bpm = melody_bpm
@@ -615,21 +776,6 @@ def main():
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        # Style sources
-        demos_dir = Path("demos")
-        demo_files = []
-        if demos_dir.exists():
-            demo_files = sorted([f.stem for f in demos_dir.glob("*.mid")])
-        
-        selected_bass_styles = st.multiselect(
-            "Style MIDIs / MIDIs de estilo",
-            demo_files,
-            default=demo_files[:2] if len(demo_files) >= 2 else demo_files,
-            help="Select MIDIs to learn durations | Selecciona MIDIs para aprender duraciones",
-            key="pattern_bass_styles"
-        )
-    
-    with col2:
         bass_duration_strategy = st.radio(
             "Duration / Duración",
             options=["mode", "median", "random"],
@@ -638,14 +784,15 @@ def main():
             key="pattern_bass_duration"
         )
     
-    with col3:
+    with col2:
         use_bass_jump_predict = st.checkbox(
             "Use Jump Predict",
             value=False,
             help="Use jump model for octave/jump within bass range (advanced)",
             key="pattern_bass_jump"
         )
-        
+    
+    with col3:
         pattern_bass_bpm = st.number_input(
             "BPM",
             min_value=40,
@@ -657,43 +804,39 @@ def main():
     
     if st.button("🎵 Generate Pattern / Generar Patrón", type="primary", width='stretch'):
         try:
-            if not selected_bass_styles:
-                st.error("⚠️ Select at least one style MIDI / Selecciona al menos un MIDI de estilo")
-            else:
-                # Load style tracks
-                style_tracks = []
-                for demo_name in selected_bass_styles:
-                    demo_path = demos_dir / f"{demo_name}.mid"
-                    demo_song = load_midi(str(demo_path))
-                    style_tracks.extend(demo_song.tracks)
+            # Generate pattern track
+            with st.spinner("Generating pattern... / Generando patrón..."):
+                # Use trained models if available, else fallback
+                style_tracks = st.session_state.trained_style_tracks if st.session_state.trained_style_tracks else []
                 
-                # Generate pattern track
-                with st.spinner("Generating pattern... / Generando patrón..."):
-                    if pattern_mode == "offset":
-                        bass_track = generate_pattern_bass(
-                            pattern_string=pattern_string,
-                            style_tracks=style_tracks,
-                            bpm=pattern_bass_bpm,
-                            mode="offset",
-                            bass_offset=bass_offset,
-                            min_key=bass_min_key,
-                            max_key=bass_max_key,
-                            duration_strategy=bass_duration_strategy,
-                            use_jump_predict=use_bass_jump_predict
-                        )
-                    else:
-                        bass_track = generate_pattern_bass(
-                            pattern_string=pattern_string,
-                            style_tracks=style_tracks,
-                            bpm=pattern_bass_bpm,
-                            mode="tonic_scale",
-                            tonic=bass_tonic,
-                            scale_mode=bass_scale_mode,
-                            min_key=bass_min_key,
-                            max_key=bass_max_key,
-                            duration_strategy=bass_duration_strategy,
-                            use_jump_predict=use_bass_jump_predict
-                        )
+                if not style_tracks:
+                    st.info("ℹ️ No trained models. Using heuristic durations. Train models in Style MIDI Library for AI patterns.")
+                
+                if pattern_mode == "offset":
+                    bass_track = generate_pattern_bass(
+                        pattern_string=pattern_string,
+                        style_tracks=style_tracks,
+                        bpm=pattern_bass_bpm,
+                        mode="offset",
+                        bass_offset=bass_offset,
+                        min_key=bass_min_key,
+                        max_key=bass_max_key,
+                        duration_strategy=bass_duration_strategy,
+                        use_jump_predict=use_bass_jump_predict
+                    )
+                else:
+                    bass_track = generate_pattern_bass(
+                        pattern_string=pattern_string,
+                        style_tracks=style_tracks,
+                        bpm=pattern_bass_bpm,
+                        mode="tonic_scale",
+                        tonic=bass_tonic,
+                        scale_mode=bass_scale_mode,
+                        min_key=bass_min_key,
+                        max_key=bass_max_key,
+                        duration_strategy=bass_duration_strategy,
+                        use_jump_predict=use_bass_jump_predict
+                    )
                 
                 # Update song BPM
                 st.session_state.song.bpm = pattern_bass_bpm

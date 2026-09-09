@@ -318,7 +318,7 @@ def render_all_tracks_combined_chart(song: Song, include_muted: bool = False):
         height=300
     )
     
-    st.altair_chart(chart, use_container_width=True)
+    st.altair_chart(chart, width='stretch')
 
 
 def main():
@@ -368,14 +368,16 @@ def main():
             min_value=1,
             max_value=88,
             value=40,
-            help="Root key (40 = E, 48 = C) | Tecla raíz"
+            help="Root key (40 = E, 48 = C) | Tecla raíz",
+            key="melody_tonic"
         )
         
         mode = st.selectbox(
             "Mode / Modo",
             options=list(SCALE_MODES.keys()),
             index=0,
-            help="Scale mode | Modo escala"
+            help="Scale mode | Modo escala",
+            key="melody_mode"
         )
     
     # Chunking and mapping
@@ -386,7 +388,8 @@ def main():
             "Chunk / Agrupación",
             options=["pair_mod", "single"],
             index=0,
-            help="pair_mod: pairs → richer | single: one digit → simple"
+            help="pair_mod: pairs → richer | single: one digit → simple",
+            key="melody_chunk_mode"
         )
     
     with col2:
@@ -395,7 +398,8 @@ def main():
             min_value=5,
             max_value=24,
             value=12,
-            help="12=chromatic, 7=diatonic, 5=pentatonic"
+            help="12=chromatic, 7=diatonic, 5=pentatonic",
+            key="melody_modulus"
         )
     
     with col3:
@@ -403,7 +407,8 @@ def main():
             "Register / Registro",
             options=["basic", "jump_predict"],
             index=0,
-            help="basic: original | jump_predict: octave disambiguation"
+            help="basic: original | jump_predict: octave disambiguation",
+            key="melody_register_mode"
         )
     
     # Range and octave controls
@@ -415,7 +420,8 @@ def main():
             min_value=1,
             max_value=88,
             value=28,
-            help="Lowest note allowed (28 = E1)"
+            help="Lowest note allowed (28 = E1)",
+            key="melody_min_key"
         )
     
     with col2:
@@ -424,7 +430,8 @@ def main():
             min_value=1,
             max_value=88,
             value=64,
-            help="Highest note allowed (64 = E4)"
+            help="Highest note allowed (64 = E4)",
+            key="melody_max_key"
         )
     
     with col3:
@@ -433,7 +440,8 @@ def main():
             min_value=1,
             max_value=4,
             value=2,
-            help="How many octaves to span (basic mode)"
+            help="How many octaves to span (basic mode)",
+            key="melody_octave_range"
         )
     
     # Style sources
@@ -450,7 +458,8 @@ def main():
             demo_files,
             default=demo_files[:3] if len(demo_files) >= 3 else demo_files,
             help="Select multiple MIDIs to learn duration patterns | "
-                 "Selecciona múltiples MIDIs para aprender patrones"
+                 "Selecciona múltiples MIDIs para aprender patrones",
+            key="melody_selected_demos"
         )
     
     with col2:
@@ -459,7 +468,8 @@ def main():
             options=["mode", "median", "random"],
             index=0,
             help="How to pick duration: mode (most common) | "
-                 "Cómo elegir duración: mode (más común)"
+                 "Cómo elegir duración: mode (más común)",
+            key="melody_duration_strategy"
         )
         
         melody_bpm = st.number_input(
@@ -467,7 +477,8 @@ def main():
             min_value=40,
             max_value=240,
             value=96,
-            help="Tempo (96 = calm default)"
+            help="Tempo (96 = calm default)",
+            key="melody_bpm"
         )
     
     if st.button("🎵 Generate Number Melody / Generar Melodía Numérica", type="primary", width='stretch'):
@@ -539,7 +550,8 @@ def main():
             "Pattern String / Cadena de Patrón",
             value="3-1-4-1-5",
             help="Enter digit sequence (e.g., 3-1-4-1-5 or 3,1,4,1,5) | "
-                 "Introduce secuencia de dígitos"
+                 "Introduce secuencia de dígitos",
+            key="pattern_string"
         )
     
     with col2:
@@ -547,7 +559,8 @@ def main():
             "Mode / Modo",
             options=["offset", "tonic_scale"],
             index=0,
-            help="offset: digit + offset | tonic_scale: tonic + scale degree in low octave"
+            help="offset: digit + offset | tonic_scale: tonic + scale degree in low octave",
+            key="pattern_mode"
         )
     
     col1, col2, col3 = st.columns(3)
@@ -559,7 +572,8 @@ def main():
                 min_value=0,
                 max_value=40,
                 value=10,
-                help="Add this to each digit (e.g., 3 + 10 = key 13)"
+                help="Add this to each digit (e.g., 3 + 10 = key 13)",
+                key="pattern_bass_offset"
             )
         else:
             bass_tonic = st.number_input(
@@ -567,13 +581,15 @@ def main():
                 min_value=1,
                 max_value=40,
                 value=16,
-                help="Root key in low register (16 = E0, 28 = E1)"
+                help="Root key in low register (16 = E0, 28 = E1)",
+                key="pattern_bass_tonic"
             )
             bass_scale_mode = st.selectbox(
                 "Scale Mode",
                 options=list(SCALE_MODES.keys()),
                 index=4,  # chromatic
-                help="Scale mode for tonic_scale"
+                help="Scale mode for tonic_scale",
+                key="pattern_bass_scale_mode"
             )
     
     with col2:
@@ -582,7 +598,8 @@ def main():
             min_value=1,
             max_value=88,
             value=28,
-            help="Lowest note allowed (28 = E1)"
+            help="Lowest note allowed (28 = E1)",
+            key="pattern_bass_min_key"
         )
     
     with col3:
@@ -591,7 +608,8 @@ def main():
             min_value=1,
             max_value=88,
             value=42,
-            help="Highest note allowed (42 = F#2)"
+            help="Highest note allowed (42 = F#2)",
+            key="pattern_bass_max_key"
         )
     
     col1, col2, col3 = st.columns(3)
@@ -637,7 +655,7 @@ def main():
             key="pattern_bass_bpm"
         )
     
-    if st.button("🎵 Generate Pattern / Generar Patrón", type="primary", use_container_width=True):
+    if st.button("🎵 Generate Pattern / Generar Patrón", type="primary", width='stretch'):
         try:
             if not selected_bass_styles:
                 st.error("⚠️ Select at least one style MIDI / Selecciona al menos un MIDI de estilo")

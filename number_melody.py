@@ -622,8 +622,8 @@ def generate_pattern_bass(
     max_key: int = 42,
     duration_strategy: Literal["mode", "median", "random"] = "mode",
     use_jump_predict: bool = False,
-    intensity: float = 2.0,
-    hold_seconds: float = 2.0,
+    intensity: float = 1.0,
+    hold_seconds: float = 0.8,
     track_name: Optional[str] = None
 ) -> Track:
     """
@@ -644,8 +644,8 @@ def generate_pattern_bass(
         max_key: Maximum bass key (default 42 = F#2)
         duration_strategy: How to pick duration from histogram (mode/median/random)
         use_jump_predict: Use jump model for duration/jump prediction within bass range
-        intensity: Track intensity parameter (default 2.0 for bass)
-        hold_seconds: Track hold parameter (default 2.0 for bass sustain)
+        intensity: Track intensity parameter (default 1.0, same as melody)
+        hold_seconds: Track hold parameter (default 0.8, same as melody)
         track_name: Custom track name (default auto-generated)
     
     Returns:
@@ -775,13 +775,13 @@ def generate_pattern_bass(
         pattern_prefix = pattern_string[:15].replace(" ", "")
         mode_label = "offset" if mode == "offset" else f"{scale_mode}"
         jump_label = ", jump" if use_jump_predict else ""
-        track_name = f"Pattern Bass ({pattern_prefix}, {mode_label}{jump_label})"
+        track_name = f"Pattern ({pattern_prefix}, {mode_label}{jump_label})"
     
     return Track(
         name=track_name,
         intensity=intensity,
         hold_seconds=hold_seconds,
-        delay=False,  # Bass typically doesn't use delay
+        delay=True,  # Use delay like melody for consistency
         notes=notes
     )
 

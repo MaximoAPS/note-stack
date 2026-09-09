@@ -318,7 +318,7 @@ def render_all_tracks_combined_chart(song: Song, include_muted: bool = False):
         height=300
     )
     
-    st.altair_chart(chart, use_container_width=True)
+    st.altair_chart(chart, width='stretch')
 
 
 def main():
@@ -357,7 +357,7 @@ def main():
         )
     
     with col2:
-        if st.button("➕ Add Selected Demos", use_container_width=True):
+        if st.button("➕ Add Selected Demos", width='stretch'):
             added = 0
             for demo_name in selected_demos:
                 demo_path = demos_dir / f"{demo_name}.mid"
@@ -418,7 +418,7 @@ def main():
                     st.rerun()
         
         # Clear all button
-        if st.button("🗑️ Clear All Style MIDIs", use_container_width=True):
+        if st.button("🗑️ Clear All Style MIDIs", width='stretch'):
             # Clean up temp files
             for entry in st.session_state.style_pack:
                 if entry['source'] == 'upload' and os.path.exists(entry['path']):
@@ -452,7 +452,7 @@ def main():
     
     with col2:
         # Preset buttons
-        if st.button("📍 Pi digits", use_container_width=True):
+        if st.button("📍 Pi digits", width='stretch'):
             st.session_state.pi_digits = "314159265358979323846264338327950288419716939937510"
             st.rerun()
         
@@ -605,7 +605,7 @@ def main():
                 help="How to pick duration: mode (most common)"
             )
     
-    if st.button("🎵 Generate Solo Melody from Numbers", type="primary", use_container_width=True):
+    if st.button("🎵 Generate Solo Melody from Numbers", type="primary", width='stretch'):
         try:
             # Determine which style sources to use
             style_tracks = []
@@ -800,7 +800,7 @@ def main():
             key="pattern_bass_bpm"
         )
     
-    if st.button("🎸 Generate Pattern Bass / Generar Bajo de Patrón", type="primary", use_container_width=True):
+    if st.button("🎸 Generate Pattern Bass / Generar Bajo de Patrón", type="primary", width='stretch'):
         try:
             # Determine which style sources to use
             style_tracks = []
@@ -997,7 +997,7 @@ def main():
                 
                 with col3:
                     if len(st.session_state.song.tracks) > 1:
-                        if st.button("🗑️ Remove Track", key=f"remove_{track_idx}", use_container_width=True):
+                        if st.button("🗑️ Remove Track", key=f"remove_{track_idx}", width='stretch'):
                             st.session_state.song.tracks.pop(track_idx)
                             st.rerun()
                 
@@ -1059,7 +1059,7 @@ def main():
                         )
                 
                 with col2:
-                    if available_effects and st.button("➕ Agregar efecto / Add effect", key=f"add_fx_{track_idx}", use_container_width=True):
+                    if available_effects and st.button("➕ Agregar efecto / Add effect", key=f"add_fx_{track_idx}", width='stretch'):
                         # Add the selected effect
                         effect_key = effect_to_add.lower()
                         active_fx.add(effect_key)
@@ -1069,7 +1069,7 @@ def main():
                 with col3:
                     if st.button("🔄 Piano Defaults", key=f"fx_reset_{track_idx}",
                                help="Reset FX to piano defaults: I=1.0, hold=0.8s, delay=on",
-                               use_container_width=True):
+                               width='stretch'):
                         # Set piano defaults
                         track.intensity = 1.0
                         track.hold_seconds = 0.8

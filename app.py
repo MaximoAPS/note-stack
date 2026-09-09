@@ -253,6 +253,57 @@ def render_timeline_chart(track: Track, bpm: float):
     st.altair_chart(chart, use_container_width=True)
 
 
+def render_all_tracks_combined_chart(song: Song, include_muted: bool = False):
+    """Render a combined timeline chart showing all tracks together.
+    
+    Args:
+        song: The song containing all tracks
+        include_muted: If True, include muted tracks (shown faded)
+    """
+    # Collect all notes from all tracks
+    chart_data = []
+    
+    for track in song.tracks:
+        # Skip muted tracks if not including them
+        if track.mute and not include_muted:
+            continue
+        
+        for note in track.notes:
+            chart_data.append({
+                'start': note.start_beat,
+                'end': note.start_beat + note.duration_beats,
+                'key': note.key,
+                'velocity': note.velocity,
+                'track': track.name,
+                'muted': track.mute
+            })
+    
+    # Guard against empty data
+    if not chart_data:
+        st.info("No notes to display. Add tracks with notes to see the combined timeline.")
+        return
+    
+    df = pd.DataFrame(chart_data)
+    
+    # Create combined timeline chart with color by track
+    chart = alt.Chart(df).mark_bar().encode(
+        x=alt.X('start:Q', title='Beat'),
+        x2='end:Q',
+        y=alt.Y('key:Q', scale=alt.Scale(domain=[1, 88]), title='Piano Key'),
+        color=alt.Color('track:N', title='Track', legend=alt.Legend(orient='right')),
+        opacity=alt.condition(
+            alt.datum.muted == True,
+            alt.value(0.3),
+            alt.value(1.0)
+        ),
+        tooltip=['track:N', 'key:Q', 'start:Q', 'end:Q', 'velocity:Q']
+    ).properties(
+        height=300
+    )
+    
+    st.altair_chart(chart, use_container_width=True)
+
+
 def main():
     st.set_page_config(page_title="Note Stack Studio", layout="wide")
     
@@ -531,6 +582,20 @@ def main():
     if not st.session_state.song.tracks:
         st.info("💡 No tracks yet. Generate a Number Melody above or add an empty track to get started!")
     else:
+        # ========== ALL TRACKS COMBINED CHART ==========
+        st.subheader("🎼 All Tracks — Song Overview")
+        
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.caption("Combined timeline showing all tracks together")
+        with col2:
+            show_muted = st.checkbox("Show muted tracks", value=False, key="show_muted_combined")
+        
+        render_all_tracks_combined_chart(st.session_state.song, include_muted=show_muted)
+        
+        st.write("---")
+        st.subheader("📋 Individual Tracks")
+        
         for track_idx, track in enumerate(st.session_state.song.tracks):
             # Determine track role from name prefix
             role_emoji = "🎵" if "Solo" in track.name else "🎸" if "Base" in track.name else "✨" if "Adorn" in track.name else "🎹"

@@ -247,3 +247,58 @@ def quantize_notes(track: Track, beat_grid: float = 0.25) -> Track:
         note.start_beat = round(note.start_beat / beat_grid) * beat_grid
     
     return result
+
+
+def expand_looped_track(track: Track, song_end_beat: float) -> Track:
+    """
+    Expand a looped track by repeating its notes across the timeline.
+    
+    If track.loop_enabled is False, returns a copy of the track unchanged.
+    If track.loop_length_beats is 0 or None, loops until song_end_beat.
+    Otherwise, loops for the specified length.
+    
+    Args:
+        track: Track to expand (may have loop_enabled=True)
+        song_end_beat: End beat of the song (for "loop until end" mode)
+    
+    Returns:
+        New track with repeated notes if looping, or original track if not
+    """
+    if not track.loop_enabled or not track.notes:
+        return deepcopy(track)
+    
+    result = deepcopy(track)
+    
+    # Find the span of original notes
+    original_notes = result.notes
+    min_start = min(n.start_beat for n in original_notes)
+    max_end = max(n.start_beat + n.duration_beats for n in original_notes)
+    pattern_length = max_end - min_start
+    
+    if pattern_length <= 0:
+        return result
+    
+    # Determine loop target
+    if track.loop_length_beats > 0:
+        target_end = min_start + track.loop_length_beats
+    else:
+        # Loop until song end
+        target_end = song_end_beat
+    
+    # Generate repeated notes
+    looped_notes = []
+    offset = 0.0
+    
+    while min_start + offset < target_end:
+        for note in original_notes:
+            new_note = deepcopy(note)
+            new_note.start_beat = note.start_beat + offset
+            
+            # Only add if within target range
+            if new_note.start_beat < target_end:
+                looped_notes.append(new_note)
+        
+        offset += pattern_length
+    
+    result.notes = looped_notes
+    return result

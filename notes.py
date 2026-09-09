@@ -22,6 +22,8 @@ class Track:
     delay: bool = False  # Enable delay voice
     hold_seconds: float = 0.8  # d parameter for sustain
     notes: List[Note] = field(default_factory=list)
+    loop_enabled: bool = False  # Enable looping for this track
+    loop_length_beats: float = 4.0  # Loop length (or 0 for "until song end")
 
 
 @dataclass

@@ -6,19 +6,44 @@ La **Studio UI** proporciona un flujo de trabajo de extremo a extremo para crear
 
 ## Flujo de Trabajo Recomendado
 
-### 1. Generar una Melodía Numérica
+### 0. Configurar Biblioteca de Estilo (Nuevo)
 
-**Number Melody** transforma secuencias de dígitos (Pi, Fibonacci, fechas) en melodías con duraciones aprendidas de MIDIs de estilo.
+**Style / Training MIDI Library** es una sección global en la parte superior de Studio que gestiona MIDIs de entrenamiento para toda la sesión.
+
+**Pasos:**
+1. **Selecciona demos**: Elige uno o más MIDIs de demostración de la lista
+2. **Haz clic en "➕ Add Selected Demos"**: Añádelos al paquete de estilo
+3. **O sube MIDIs**: Usa el cargador "Upload MIDI" para añadir tus propios archivos
+4. **Ver cargados**: La lista muestra todos los MIDIs de estilo con conteo de pistas
+5. **Eliminar entradas**: Haz clic en 🗑️ para eliminar MIDIs individuales, o "🗑️ Clear All" para todos
+
+**Uso:**
+- Number Melody, Pattern → Base, AI fills, y jump_predict **usan automáticamente** estos MIDIs de estilo
+- Si está vacío, las herramientas usan MIDI-GPT, heurísticas, o valores predeterminados neutrales
+- Puedes sobrescribir con selección local en opciones avanzadas
+
+**Beneficio:** Carga MIDIs de estilo **una vez** en la parte superior; todos los generadores los usan.
+
+### 1. Generar una Melodía Numérica (Solo)
+
+**Number Sequence → Solo / Melody** transforma secuencias de dígitos (Pi, Fibonacci, fechas) en melodías con duraciones aprendidas de MIDIs de estilo.
 
 **Pasos:**
 1. Pega una secuencia de dígitos (ej. Pi: `314159265358979...`)
-2. Elige **Chunk Mode**: `pair_mod` (recomendado) para variación rica
-3. Establece **Modulus**: 12 (cromático), 7 (diatónico), 5 (pentatónico)
-4. Configura **Tonic** (tónica): 40 = E, 48 = C medio
-5. Selecciona **múltiples MIDIs de estilo** (3+ para patrones más ricos)
-6. Haz clic en **"🎵 Generar Melodía Numérica"**
+2. Configura **Tonic** (tónica): 40 = E, 48 = C medio
+3. Configura **BPM**: 96 (calmado), 120 (moderado), 160 (rápido)
+4. Elige **Mode** (modo): major, minor, pentatonic, chromatic
+5. **O sube un Solo MIDI**: Usa el cargador "Or upload Solo MIDI"
+6. Haz clic en **"🎵 Generate Solo Melody from Numbers"**
 
-**Resultado:** Una pista "Solo" se añade a la canción con la melodía generada.
+**Opciones avanzadas** (en expansor "⚙️ Advanced Options"):
+- **Chunk Mode**: `pair_mod` (recomendado) o `single`
+- **Modulus**: 12 (cromático), 7 (diatónico), 5 (pentatónico)
+- **Register**: `basic` o `jump_predict` (desambiguación de octava)
+- **Key range**: min/max keys, octave span
+- **Override style pack**: Selecciona MIDIs específicos en lugar del paquete global
+
+**Resultado:** Una pista "🎵 Solo" se añade a la canción con la melodía generada.
 
 ### 2. Generar Bajo de Patrón (Pattern → Base)
 
@@ -30,10 +55,12 @@ La **Studio UI** proporciona un flujo de trabajo de extremo a extremo para crear
    - **Offset**: Cada dígito + offset (ej. 3+10=13, 1+10=11, 4+10=14...)
    - **Tonic+Scale**: Mapea dígitos a grados de escala en octava baja (ej. tónica E0=16, cromática)
 3. Establece rango de bajo: min=28 (E1), max=42 (F#2)
-4. Selecciona MIDIs de estilo (Chopin + Liszt) para aprender duraciones
-5. Haz clic en **"🎸 Generar Bajo de Patrón"**
+4. Usa el paquete de estilo global (o sobrescribe en opciones avanzadas)
+5. Haz clic en **"🎸 Generate Pattern Bass"**
 
-**Resultado:** Una pista "Base" se añade con el patrón `13-11-14-11-15` y ritmos aprendidos.
+**Resultado:** Una pista "🎸 Base" se añade con el patrón `13-11-14-11-15` y ritmos aprendidos.
+
+**Loop para pistas Base:** Después de generar, puedes activar **🔁 Loop** en la pista para repetir el patrón a través de la línea de tiempo de la canción (ver sección 5).
 
 **Casos de uso:**
 - Bajo de Pi: `3-1-4-1-5-9-2-6-5-3-5-8-9-7-9`
@@ -62,9 +89,41 @@ En el **Tracks Studio**, cada pista tiene botones de **AI Fill Track** para gene
 
 **Nota:** Para líneas de bajo que siguen una secuencia de dígitos específica en orden (como Pi `3-1-4-1-5`), usa **Pattern → Base** en lugar de AI Fill Bass.
 
-### 4. Editar Notas
+### 4. Loop de Pista (Nuevo)
+
+Para pistas Base (y otras), ahora puedes activar **🔁 Loop** para repetir el patrón de la pista a través de la línea de tiempo de la canción.
+
+**Controles:**
+- **🔁 Loop**: Checkbox para activar el loop
+- **Loop beats**: Longitud del loop en beats (0 = hasta el final de la canción)
+
+**Ejemplo:**
+1. Genera una pista Base con Pattern → Base (ej. 4 beats de patrón)
+2. Activa **🔁 Loop** en la pista
+3. Establece **Loop beats** a 0 (hasta el final) o un valor específico (ej. 16 beats)
+4. Al reproducir/exportar, la pista se repite automáticamente
+
+**Uso típico:** Líneas de bajo repetitivas, patrones de acordes, ostinatos.
+
+### 5. Editar Notas
 
 Cada pista ahora tiene un **Editor de Badges de Clusters** que muestra las notas como badges horizontales:
+
+#### Insertar Silencios / Reposos (Nuevo)
+
+Ahora puedes insertar silencios (reposos) con duración específica:
+
+**Controles:**
+- **Rest duration**: Selecciona duración del silencio (1/4, 1/2, 1, 2... beats)
+- **➕ Insert Rest at End**: Marca el final de la pista para pegar más clusters después de un silencio
+- **➕ Insert Rest Here**: Inserta silencio en una posición específica (desplaza notas posteriores)
+
+**Ejemplo:**
+1. Tienes notas en beats 0-4
+2. Inserta reposo de 2 beats en beat 2
+3. Las notas después de beat 2 se desplazan a beat 4+
+
+**💡 Nota:** Los silencios son **gaps** (huecos) — ausencia de notas = silencio. No hay notas "mudas" falsas.
 
 #### Editor de Badges de Clusters
 
@@ -119,16 +178,32 @@ La **tabla de datos interactiva** tradicional sigue disponible en un expansor "�
 
 Usa el editor de badges para flujo rápido y el editor de tabla para control preciso de timing y velocity.
 
-### 5. Configurar FX por Pista
+### 6. Calibrar FX por Pista (Mejorado)
 
-Cada pista tiene controles de efectos:
+Cada pista ahora tiene una sección **🎛️ FX Calibration** con controles claros y valores predeterminados de piano:
 
-- **Intensity** (0.1-5.0): Multiplicador de intensidad armónica (1.0 = melodía, 2.0 = bajo)
-- **Delay**: Activa eco de 30/160 segundos para sonido más rico
-- **Hold** (0.1-5.0s): Duración de sustain (0.5 = corto, 2.0 = largo)
-- **Mute**: Silencia la pista temporalmente
+**Controles:**
+- **Intensity** (0.1-5.0): Multiplicador de intensidad armónica
+  - 1.0 = melodía (predeterminado piano)
+  - 2.0 = bajo/rico
+- **Delay**: Activa eco de 30/160 segundos para sonido más espacioso
+  - On = predeterminado piano para melodías
+  - Off = para bajos/ritmo directo
+- **Hold** (0.1-5.0s): Duración de sustain de nota
+  - 0.8s = predeterminado piano (equilibrado)
+  - 0.5s = corto (staccato)
+  - 2.0s = largo (legato)
+- **🔄 Piano Defaults**: Botón para restablecer a valores predeterminados de piano (I=1.0, Hold=0.8s, Delay=On)
 
-### 6. Reproducir y Exportar
+**Roles y FX sugeridos:**
+- **Solo (Melodía)**: I=1.0, Delay=On, Hold=0.8s (predeterminado piano)
+- **Base (Bajo)**: I=2.0, Delay=Off, Hold=2.0s (rico y sostenido)
+- **Base (Acordes)**: I=1.5, Delay=Off, Hold=1.5s (medio)
+- **Adorn**: I=1.0, Delay=On, Hold=0.5s (ligero)
+
+**Mute**: Silencia la pista temporalmente sin borrar notas
+
+### 7. Reproducir y Exportar
 
 - **▶ Play**: Sintetiza y reproduce la canción completa
 - **Download WAV**: Exporta audio estéreo de 16-bit 44.1kHz

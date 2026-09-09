@@ -15,6 +15,7 @@ Note Stack V1 is a Streamlit web application for composing and synthesizing pian
 - **MIDI Import/Export**: Load MIDI files and export your compositions
 - **Demo Presets**: Includes the original "Piano Song" from Desmos
 - **🔢 Number Melody**: Transform digit sequences (Pi, Fibonacci, dates) into melodies with learned durations
+- **🎸 Pattern → Base**: Generate ordered bass lines from digit patterns (e.g., Pi "3-1-4-1-5" → bass with those degrees)
 - **🤖 AI Track Generation**: Heuristic-based bass, chord, harmony, and adornment generators
 
 ## Studio UI
@@ -27,7 +28,14 @@ The **Studio UI** provides an end-to-end workflow for creating expressive piano 
    - **Tonic/mode/octave controls**: Customize scale and range
    - Generates a "Solo" track ready to play or edit
 
-2. **Tracks Studio** — Add, edit, and generate AI tracks
+2. **Pattern → Base Generator** — Create ordered bass lines from digit patterns
+   - **Ordered pattern mapping**: Digits like "3-1-4-1-5" become bass notes in that exact sequence
+   - **Offset or tonic+scale modes**: Map digits as simple offsets (3+10=13) or scale degrees
+   - **AI duration learning**: Learns rhythm from style MIDIs, same as Number Melody
+   - **Bass register control**: Set min/max keys (e.g., 28-42 for typical bass range)
+   - Generates a "Base" track distinct from arbitrary AI Fill Bass
+
+3. **Tracks Studio** — Add, edit, and generate AI tracks
    - **Track roles**: Mark tracks as Solo (melody), Base (bass/chords), or Adorn (decoration)
    - **AI Fill Track** buttons: Generate Bass Line (keys 1-28), Chord Base (keys 29-52), Adorn Pluck, or Harmony Line from existing tracks
    - **Per-track FX**: Intensity (harmonic multiplier), Delay (30/160s echo), Hold (sustain duration)
@@ -66,15 +74,37 @@ python3 number_melody.py \
 
 See `analysis/NUMBER_MELODY.md` for full documentation and technical details.
 
+### Pattern → Base
+
+Generate bass lines that follow a specific ordered pattern! Unlike AI Fill Bass (which extracts arbitrary low notes from donors), Pattern → Base constrains the bass to follow your digit sequence in order.
+
+**Example workflow:**
+1. Enter pattern: `3-1-4-1-5` (Pi digits)
+2. Choose mode:
+   - **Offset**: Each digit + offset (e.g., 3+10=13, 1+10=11, 4+10=14...)
+   - **Tonic+Scale**: Map digits to scale degrees in bass octave (e.g., tonic E0=16, chromatic)
+3. Set bass range: min=28 (E1), max=42 (F#2)
+4. Select style MIDIs (Chopin + Liszt) for duration learning
+5. Generate → Creates Base track with pattern `13-11-14-11-15` and learned rhythms
+
+**Use cases:**
+- Pi bass: `3-1-4-1-5-9-2-6-5-3-5-8-9-7-9`
+- Fibonacci bass: `1-1-2-3-5-8`
+- Custom sequences: `5-3-1-2-4-6-5-3`
+
+The AI assigns durations based on the jump patterns in your style MIDIs, creating a musically flowing bass line that follows your exact pitch sequence.
+
 ### AI Track Generation
 
 Generate new tracks using **Phase 1 heuristic patterns** from existing tracks:
-- **Bass Line** (keys 1-28): Extracts lowest notes
+- **Bass Line** (keys 1-28): Extracts lowest notes (arbitrary, not pattern-ordered)
 - **Chord Base** (keys 29-52): Extracts note clusters/chords
 - **Adorn Pluck** (keys 45-72): Creates sparse decorative patterns
 - **Harmony Line** (keys 45-72): Harmonizes melody with interval transposition
 
 AI tracks are generated from other tracks in the song and automatically assigned role names (Base/Adorn).
+
+**Note:** AI Fill Bass extracts existing low notes from donors. For ordered bass patterns following a specific digit sequence, use **Pattern → Base** instead.
 
 ## Installation
 
@@ -95,11 +125,12 @@ The app will open in your browser at `http://localhost:8501`.
 ### Quick Start
 
 1. **Generate a Number Melody**: Paste Pi digits, select 3 style MIDIs, click "Generate"
-2. **Add AI tracks**: Open the generated Solo track, click "Bass Line" or "Chord Base"
-3. **Edit notes**: Use cluster badges to edit keys and durations, or paste cluster strings
-4. **Adjust FX**: Set intensity (1.0-2.0), enable delay, adjust hold duration
-5. Click "▶ Play" to synthesize and hear the music
-6. Download as WAV or MIDI
+2. **Add Pattern Bass** (optional): Enter "3-1-4-1-5", set offset/range, select styles, generate ordered bass
+3. **Add AI tracks**: Click "Bass Line" (arbitrary) or "Chord Base" for accompaniment
+4. **Edit notes**: Use cluster badges to edit keys and durations, or paste cluster strings
+5. **Adjust FX**: Set intensity (1.0-2.0), enable delay, adjust hold duration
+6. Click "▶ Play" to synthesize and hear the music
+7. Download as WAV or MIDI
 
 ### Cluster Badge Editor
 

@@ -610,6 +610,182 @@ def generate_number_melody(
     )
 
 
+def generate_pattern_bass(
+    pattern_string: str,
+    style_tracks: List[Track],
+    bpm: float = 96.0,
+    mode: Literal["offset", "tonic_scale"] = "offset",
+    bass_offset: int = 10,
+    tonic: Optional[int] = None,
+    scale_mode: str = "chromatic",
+    min_key: int = 28,
+    max_key: int = 42,
+    duration_strategy: Literal["mode", "median", "random"] = "mode",
+    use_jump_predict: bool = False,
+    intensity: float = 2.0,
+    hold_seconds: float = 2.0,
+    track_name: Optional[str] = None
+) -> Track:
+    """
+    Generate bass track from ordered pattern sequence (e.g., Pi digits "3-1-4-1-5").
+    
+    This addresses the use case where the user wants a bass line that follows a specific
+    ordered pattern of degrees/digits, not arbitrary bass notes extracted from donors.
+    
+    Args:
+        pattern_string: Pattern sequence (e.g., "3-1-4-1-5" or "3,1,4,1,5")
+        style_tracks: Tracks to learn durations from (can be from multiple MIDIs)
+        bpm: Tempo (default 96)
+        mode: "offset" (digit + offset) or "tonic_scale" (tonic + scale degree)
+        bass_offset: For offset mode, add this to each digit (e.g., 3 + 10 = key 13)
+        tonic: For tonic_scale mode, root key in bass register (e.g., 16 for E0)
+        scale_mode: For tonic_scale mode, scale to use (default chromatic)
+        min_key: Minimum bass key (default 28 = E1)
+        max_key: Maximum bass key (default 42 = F#2)
+        duration_strategy: How to pick duration from histogram (mode/median/random)
+        use_jump_predict: Use jump model for duration/jump prediction within bass range
+        intensity: Track intensity parameter (default 2.0 for bass)
+        hold_seconds: Track hold parameter (default 2.0 for bass sustain)
+        track_name: Custom track name (default auto-generated)
+    
+    Returns:
+        Generated bass Track with ordered pattern notes
+    
+    Example:
+        >>> # Pi pattern "3-1-4-1-5" with offset mode
+        >>> style_songs = [load_midi("demos/chopin-etude.mid")]
+        >>> style_tracks = []
+        >>> for song in style_songs:
+        ...     style_tracks.extend(song.tracks)
+        >>> track = generate_pattern_bass(
+        ...     "3-1-4-1-5",
+        ...     style_tracks=style_tracks,
+        ...     mode="offset",
+        ...     bass_offset=10,  # 3→13, 1→11, 4→14, 1→11, 5→15
+        ...     min_key=28,
+        ...     max_key=42,
+        ...     bpm=96.0
+        ... )
+        >>> len(track.notes)
+        5
+    """
+    # 1. Parse pattern string (supports dash or comma separators)
+    pattern_string = pattern_string.replace(",", "-")
+    digits = []
+    for part in pattern_string.split("-"):
+        part = part.strip()
+        if part.isdigit():
+            digits.append(int(part))
+    
+    if not digits:
+        # No valid digits found, return empty track
+        return Track(
+            name=track_name or "Pattern Bass (empty)",
+            intensity=intensity,
+            hold_seconds=hold_seconds,
+            notes=[]
+        )
+    
+    # 2. Map pattern digits to bass keys
+    keys = []
+    
+    if mode == "offset":
+        # Simple offset mode: digit + bass_offset
+        for digit in digits:
+            key = digit + bass_offset
+            # Clamp to bass range
+            key = max(min_key, min(max_key, key))
+            keys.append(key)
+    
+    elif mode == "tonic_scale":
+        # Tonic + scale degree mode
+        if tonic is None:
+            tonic = min_key  # Default to min_key if not specified
+        
+        if scale_mode not in SCALE_MODES:
+            scale_mode = "chromatic"
+        
+        scale_degrees = SCALE_MODES[scale_mode]
+        
+        for digit in digits:
+            # Map digit to scale degree
+            degree_idx = digit % len(scale_degrees)
+            semitone_offset = scale_degrees[degree_idx]
+            key = tonic + semitone_offset
+            
+            # Clamp to bass range
+            key = max(min_key, min(max_key, key))
+            keys.append(key)
+    
+    else:
+        raise ValueError(f"Unknown mode: {mode}. Use 'offset' or 'tonic_scale'.")
+    
+    # 3. Build duration model from style tracks
+    duration_model = build_duration_model(style_tracks)
+    
+    # 4. Optionally use jump model for more sophisticated duration prediction
+    jump_model = None
+    if use_jump_predict:
+        jump_model = build_jump_model(style_tracks)
+        
+        # Refine keys using jump prediction within bass range
+        # This allows the AI to pick octave jumps within [min_key, max_key]
+        # based on learned jump patterns from style MIDIs
+        refined_keys = []
+        prev_key = keys[0] if keys else min_key
+        refined_keys.append(prev_key)
+        
+        for i in range(1, len(keys)):
+            target_pc = (keys[i] - 1) % 12  # Pitch class of intended key
+            
+            # Find best jump to reach this pitch class within bass range
+            best_key = predict_jump_for_pitch_class(
+                prev_key=prev_key,
+                target_pc=target_pc,
+                min_key=min_key,
+                max_key=max_key,
+                jump_model=jump_model
+            )
+            
+            refined_keys.append(best_key)
+            prev_key = best_key
+        
+        keys = refined_keys
+    
+    # 5. Predict durations
+    durations = predict_durations(keys, duration_model, strategy=duration_strategy)
+    
+    # 6. Create Note objects
+    notes = []
+    current_beat = 0.0
+    
+    for key, duration in zip(keys, durations):
+        note = Note(
+            key=key,
+            start_beat=current_beat,
+            duration_beats=duration,
+            velocity=100
+        )
+        notes.append(note)
+        current_beat += duration
+    
+    # 7. Create and return Track
+    if track_name is None:
+        # Auto-generate name
+        pattern_prefix = pattern_string[:15].replace(" ", "")
+        mode_label = "offset" if mode == "offset" else f"{scale_mode}"
+        jump_label = ", jump" if use_jump_predict else ""
+        track_name = f"Pattern Bass ({pattern_prefix}, {mode_label}{jump_label})"
+    
+    return Track(
+        name=track_name,
+        intensity=intensity,
+        hold_seconds=hold_seconds,
+        delay=False,  # Bass typically doesn't use delay
+        notes=notes
+    )
+
+
 def main():
     """CLI for number melody generation."""
     parser = argparse.ArgumentParser(

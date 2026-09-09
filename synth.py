@@ -112,6 +112,34 @@ def compute_envelope(t: float, intensity: float, decay_rate: float, d: float) ->
         return intensity * np.exp(-decay_rate * (X_t - 0.172))
 
 
+def compute_envelope_vectorized(t: np.ndarray, intensity: float, decay_rate: float, d: float) -> np.ndarray:
+    """
+    Vectorized envelope computation for array of time points.
+    Much faster than calling compute_envelope in a loop.
+    """
+    envelope = np.zeros_like(t)
+    
+    # Attack phase (0.05 to 0.172)
+    attack_mask = (t >= 0.05) & (t < 0.172)
+    delta_t = 0.172 - 0.05
+    a = intensity / (delta_t ** 1.5)
+    envelope[attack_mask] = a * ((t[attack_mask] - 0.05) ** 1.5)
+    
+    # Decay phase (>= 0.172)
+    decay_mask = t >= 0.172
+    
+    # Vectorized time warp
+    X_t = t.copy()
+    freeze_mask = (t >= 0.34) & (t < d)
+    X_t[freeze_mask] = 0.34
+    post_freeze_mask = t >= d
+    X_t[post_freeze_mask] = t[post_freeze_mask] - d + 0.34
+    
+    envelope[decay_mask] = intensity * np.exp(-decay_rate * (X_t[decay_mask] - 0.172))
+    
+    return envelope
+
+
 def synthesize_note(key: int, duration_seconds: float, track_idx: int, start_beat: float,
                     intensity: float, hold_seconds: float, velocity: int = 100) -> np.ndarray:
     """
@@ -154,9 +182,8 @@ def synthesize_note(key: int, duration_seconds: float, track_idx: int, start_bea
         harm_intensity = harmonic_intensity(h) * intensity * vel_scale
         decay_rate = box_muller_decay(track_idx, key, start_beat, H)
         
-        # Compute envelope for each time point
-        envelope = np.array([compute_envelope(ti, harm_intensity, decay_rate, hold_seconds) 
-                            for ti in t])
+        # Compute envelope (vectorized for speed)
+        envelope = compute_envelope_vectorized(t, harm_intensity, decay_rate, hold_seconds)
         
         # Generate harmonic
         harmonic = envelope * np.sin(2 * np.pi * freq * t)
@@ -191,8 +218,8 @@ def apply_lowpass_filter(signal: np.ndarray, cutoff_hz: float = 13000) -> np.nda
 def synthesize_track(track: Track, bpm: float, track_idx: int, total_beats: float) -> np.ndarray:
     """Synthesize all notes in a track, optionally with delay voice."""
     duration_seconds = (total_beats * 60.0) / bpm
-    # Add extra padding for long note tails (3.5s cap per note)
-    num_samples = int((duration_seconds + 4.0) * SAMPLE_RATE)
+    # Add 3.5s padding for note tails (max tail length per note)
+    num_samples = int((duration_seconds + 3.5) * SAMPLE_RATE)
     signal = np.zeros(num_samples)
     
     for note in track.notes:
@@ -249,12 +276,12 @@ def synthesize_song(song: Song) -> Tuple[np.ndarray, int]:
         silence = np.zeros((SAMPLE_RATE, 2))
         return silence.astype(np.int16), SAMPLE_RATE
     
-    # Add padding for note tails (3.5s max per note + 2 beats)
-    total_beats += 2.0
+    # Add 1 beat padding for musical breathing room
+    total_beats += 1.0
     
     duration_seconds = (total_beats * 60.0) / song.bpm
-    # Extra padding for long note decays
-    num_samples = int((duration_seconds + 4.0) * SAMPLE_RATE)
+    # Add 3.5s for note tail decay (max tail length)
+    num_samples = int((duration_seconds + 3.5) * SAMPLE_RATE)
     mixed_mono = np.zeros(num_samples)
     
     # Mix all unmuted tracks to mono

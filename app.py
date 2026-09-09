@@ -65,12 +65,12 @@ def clusters_to_notes(clusters: List[NoteCluster]) -> List[Note]:
                 key=key,
                 start_beat=cluster.start_beat,
                 duration_beats=cluster.duration_beats,
-                velocity=cluster.velocity
+                velocity=max(1, cluster.velocity)  # Ensure velocity ≥ 1
             ))
     return notes
 
 
-def parse_cluster_string(cluster_str: str, default_duration: float = 0.5) -> List[NoteCluster]:
+def parse_cluster_string(cluster_str: str, default_duration: float = 0.5) -> Tuple[List[NoteCluster], List[str]]:
     """Parse cluster string like '35-35,36-38-35' into clusters.
     
     Syntax:
@@ -83,8 +83,12 @@ def parse_cluster_string(cluster_str: str, default_duration: float = 0.5) -> Lis
     2. [35,36] at beat 0.5
     3. [38] at beat 1.0
     4. [35] at beat 1.5
+    
+    Returns:
+        (clusters, warnings) - list of clusters and list of warning messages
     """
     clusters = []
+    warnings = []
     current_beat = 0.0
     
     parts = cluster_str.strip().split('-')
@@ -97,11 +101,19 @@ def parse_cluster_string(cluster_str: str, default_duration: float = 0.5) -> Lis
         keys = []
         for k in key_strs:
             try:
-                keys.append(int(k.strip()))
+                key_val = int(k.strip())
+                keys.append(key_val)
+                
+                # Warn about very low or very high keys
+                if key_val < 20:
+                    warnings.append(f"⚠️ Key {key_val} is very low (near bottom of piano, barely audible)")
+                elif key_val > 80:
+                    warnings.append(f"⚠️ Key {key_val} is very high (top of piano)")
             except ValueError:
                 continue
         
         if keys:
+            # Ensure velocity is at least 1
             clusters.append(NoteCluster(
                 start_beat=current_beat,
                 duration_beats=default_duration,
@@ -110,7 +122,7 @@ def parse_cluster_string(cluster_str: str, default_duration: float = 0.5) -> Lis
             ))
             current_beat += default_duration
     
-    return clusters
+    return clusters, warnings
 
 
 def format_duration_label(duration: float) -> str:
@@ -238,6 +250,11 @@ def render_timeline_chart(track: Track, bpm: float):
     
     df = pd.DataFrame(chart_data)
     
+    # Guard against empty or invalid data
+    if df.empty or df['start'].isna().all() or not np.isfinite(df['start']).any():
+        st.write("No valid notes to display")
+        return
+    
     # Create timeline chart
     chart = alt.Chart(df).mark_bar().encode(
         x=alt.X('start:Q', title='Beat'),
@@ -250,7 +267,7 @@ def render_timeline_chart(track: Track, bpm: float):
         height=200
     )
     
-    st.altair_chart(chart, use_container_width=True)
+    st.altair_chart(chart, width='stretch')
 
 
 def main():
@@ -281,7 +298,7 @@ def main():
     
     with col2:
         # Preset buttons
-        if st.button("📍 Pi (preset)", use_container_width=True):
+        if st.button("📍 Pi (preset)", width='stretch'):
             st.session_state.pi_digits = "314159265358979323846264338327950288419716939937510"
             st.rerun()
         
@@ -402,7 +419,7 @@ def main():
             help="Tempo (96 = calm default)"
         )
     
-    if st.button("🎵 Generate Number Melody / Generar Melodía Numérica", type="primary", use_container_width=True):
+    if st.button("🎵 Generate Number Melody / Generar Melodía Numérica", type="primary", width='stretch'):
         try:
             if not selected_demos:
                 st.error("⚠️ Select at least one style MIDI / Selecciona al menos un MIDI de estilo")
@@ -464,7 +481,7 @@ def main():
     col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 1, 2])
     
     with col1:
-        if st.button("▶ Play", type="primary", use_container_width=True):
+        if st.button("▶ Play", type="primary", width='stretch'):
             with st.spinner("Synthesizing..."):
                 # Filter unmuted tracks
                 active_tracks = [t for t in st.session_state.song.tracks if not t.mute]
@@ -483,10 +500,16 @@ def main():
                         wav_file.writeframes(audio_data.tobytes())
                     
                     audio_bytes.seek(0)
-                    st.audio(audio_bytes, format='audio/wav')
+                    # Store in session state so it persists across reruns
+                    st.session_state.last_audio = audio_bytes.read()
+                    audio_bytes.seek(0)
+        
+        # Display last played audio if available
+        if 'last_audio' in st.session_state:
+            st.audio(st.session_state.last_audio, format='audio/wav')
     
     with col2:
-        if st.button("Download WAV", use_container_width=True):
+        if st.button("Download WAV", width='stretch'):
             with st.spinner("Exporting WAV..."):
                 wav_path = "/tmp/note_stack_export.wav"
                 export_wav(wav_path, st.session_state.song)
@@ -497,11 +520,11 @@ def main():
                         data=f.read(),
                         file_name="note_stack.wav",
                         mime="audio/wav",
-                        use_container_width=True
+                        width='stretch'
                     )
     
     with col3:
-        if st.button("Download MIDI", use_container_width=True):
+        if st.button("Download MIDI", width='stretch'):
             with st.spinner("Exporting MIDI..."):
                 midi_path = "/tmp/note_stack_export.mid"
                 export_midi(midi_path, st.session_state.song)
@@ -512,11 +535,11 @@ def main():
                         data=f.read(),
                         file_name="note_stack.mid",
                         mime="audio/midi",
-                        use_container_width=True
+                        width='stretch'
                     )
     
     with col4:
-        if st.button("➕ Add Empty Track", use_container_width=True):
+        if st.button("➕ Add Empty Track", width='stretch'):
             new_track = Track(name=f"Track {len(st.session_state.song.tracks) + 1}")
             st.session_state.song.tracks.append(new_track)
             st.rerun()
@@ -582,7 +605,7 @@ def main():
                 with col1:
                     if st.button("Bass Line", key=f"gen_bass_{track_idx}", 
                                help="Generate bass (keys 1-28) from other tracks",
-                               use_container_width=True):
+                               width='stretch'):
                         if mashup_sources:
                             try:
                                 gen_func = PATTERN_GENERATORS["bass_line"]
@@ -604,7 +627,7 @@ def main():
                 with col2:
                     if st.button("Chord Base", key=f"gen_chords_{track_idx}",
                                help="Generate chords (keys 29-52) from other tracks",
-                               use_container_width=True):
+                               width='stretch'):
                         if mashup_sources:
                             try:
                                 gen_func = PATTERN_GENERATORS["chord_base"]
@@ -626,7 +649,7 @@ def main():
                 with col3:
                     if st.button("Adorn Pluck", key=f"gen_pluck_{track_idx}",
                                help="Generate sparse plucks (keys 45-72)",
-                               use_container_width=True):
+                               width='stretch'):
                         if mashup_sources:
                             try:
                                 gen_func = PATTERN_GENERATORS["adorn_pluck"]
@@ -648,7 +671,7 @@ def main():
                 with col4:
                     if st.button("Harmony Line", key=f"gen_harmony_{track_idx}",
                                help="Harmonize melody (keys 45-72)",
-                               use_container_width=True):
+                               width='stretch'):
                         if mashup_sources:
                             try:
                                 gen_func = PATTERN_GENERATORS["harmony_line"]
@@ -700,7 +723,13 @@ def main():
                     if st.button("📥 Paste", key=f"paste_cluster_{track_idx}"):
                         if cluster_input.strip():
                             try:
-                                new_clusters = parse_cluster_string(cluster_input, default_duration)
+                                new_clusters, warnings = parse_cluster_string(cluster_input, default_duration)
+                                
+                                # Show warnings about unusual keys
+                                if warnings:
+                                    for warning in warnings:
+                                        st.warning(warning)
+                                
                                 if new_clusters:
                                     # Append to existing notes
                                     existing_clusters = notes_to_clusters(track.notes)
@@ -723,6 +752,7 @@ def main():
                             st.warning("Enter a cluster string")
                 
                 st.caption("**Syntax:** `35-35,36-38-35` → [35] then [35,36] then [38] then [35], each " + format_duration_label(default_duration) + " beat(s)")
+                st.caption("💡 **Note:** Paste uses **piano keys 1–88** (middle C = 40). Very low keys (<20) are barely audible.")
                 
                 st.write("---")
                 
@@ -844,7 +874,7 @@ def main():
                         
                         edited_df = st.data_editor(
                             df,
-                            use_container_width=True,
+                            width='stretch',
                             hide_index=True,
                             num_rows="dynamic",
                             column_config={

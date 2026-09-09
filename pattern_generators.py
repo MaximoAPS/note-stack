@@ -20,36 +20,36 @@ def generate_bass_pattern(
     key_range: tuple[int, int] = (1, 28),
     num_beats: float = 16.0,
     bpm: float = 120.0,
-    intensity: float = 2.0,
-    hold_seconds: float = 2.0
+    intensity: float = 1.0,
+    hold_seconds: float = 0.8
 ) -> Track:
     """
-    Generate bass line from donor tracks, filtered to key range.
+    Generate base line from donor tracks, filtered to key range.
     
     Phase 1 V1 heuristic: Extract lowest notes from donors in range,
-    thin out to beat grid.
+    thin out to beat grid. Uses same piano synth as all other tracks.
     
     Args:
         donor_tracks: Source tracks to extract patterns from
         key_range: (min_key, max_key) for bass range
         num_beats: Target length in beats
         bpm: Tempo
-        intensity: Intensity parameter (2.0 typical for bass)
-        hold_seconds: Hold parameter for bass sustain
+        intensity: Intensity parameter (1.0 default, same as melody)
+        hold_seconds: Hold parameter (0.8 default, same as melody)
     
     Returns:
         Generated bass track
     """
     if not donor_tracks:
         return Track(
-            name="Bass (AI V1)",
+            name="Base (AI V1)",
             intensity=intensity,
             hold_seconds=hold_seconds,
             notes=[]
         )
     
     # Merge all donor tracks
-    merged = merge_tracks(donor_tracks, "Bass Source")
+    merged = merge_tracks(donor_tracks, "Base Source")
     
     # Filter to bass key range
     bass_notes = filter_notes_by_key_range(
@@ -78,7 +78,7 @@ def generate_bass_pattern(
                     bass_notes.append(transposed)
     
     # Create track and get lowest notes per beat
-    temp_track = Track(name="Bass", notes=bass_notes)
+    temp_track = Track(name="Base", notes=bass_notes)
     bass_track = get_lowest_notes_per_beat(temp_track, beat_quantize=1.0)
     
     # Quantize to grid
@@ -88,10 +88,10 @@ def generate_bass_pattern(
     bass_track.notes = [n for n in bass_track.notes if n.start_beat < num_beats]
     
     # Set parameters
-    bass_track.name = "Bass (AI V1 heuristic)"
+    bass_track.name = "Base (AI V1 heuristic)"
     bass_track.intensity = intensity
     bass_track.hold_seconds = hold_seconds
-    bass_track.delay = False
+    bass_track.delay = True  # Use delay for consistency with melody
     
     return bass_track
 
@@ -297,30 +297,30 @@ def generate_harmony(
 
 # Pattern generator registry for UI
 PATTERN_GENERATORS = {
-    "bass": {
-        "name": "Bass Line",
-        "description": "Low bass line (keys 1-28)",
+    "bass_line": {
+        "name": "Base Line",
+        "description": "Low base line (keys 1-28) using piano synth",
         "default_range": (1, 28),
         "generator": generate_bass_pattern,
-        "default_params": {"intensity": 2.0, "hold_seconds": 2.0}
+        "default_params": {"intensity": 1.0, "hold_seconds": 0.8}
     },
-    "chords": {
+    "chord_base": {
         "name": "Chord Base",
-        "description": "Chord progression (keys 29-52)",
+        "description": "Chord progression (keys 29-52) using piano synth",
         "default_range": (29, 52),
         "generator": generate_chord_pattern,
-        "default_params": {"intensity": 1.5, "hold_seconds": 1.5}
+        "default_params": {"intensity": 1.0, "hold_seconds": 0.8}
     },
     "adorn_pluck": {
         "name": "Adorn Pluck",
-        "description": "Sparse decorative plucks (keys 45-72)",
+        "description": "Sparse decorative plucks (keys 45-72) using piano synth",
         "default_range": (45, 72),
         "generator": generate_adorn_pluck,
-        "default_params": {"intensity": 1.0, "hold_seconds": 0.5}
+        "default_params": {"intensity": 1.0, "hold_seconds": 0.8}
     },
-    "harmony": {
+    "harmony_line": {
         "name": "Harmony Line",
-        "description": "Harmonized melody (keys 45-72)",
+        "description": "Harmonized melody (keys 45-72) using piano synth",
         "default_range": (45, 72),
         "generator": generate_harmony,
         "default_params": {"intensity": 1.0, "hold_seconds": 0.8, "harmony_interval": 7}

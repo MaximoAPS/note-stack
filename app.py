@@ -169,7 +169,7 @@ def create_piano_song_preset() -> Song:
     track1 = Track(name="Melody", intensity=1.0, delay=True, 
                    hold_seconds=0.8, notes=track1_notes)
     
-    # Track 2: Bass low (I=2, delay=off, d=2)
+    # Track 2: Base low (I=1, delay=on, d=0.8)
     tempo_list_2 = [0, 4, 8, 12, 14, 16]
     notes_2 = [18, 21, 25, 25, 25]
     
@@ -185,10 +185,10 @@ def create_piano_song_preset() -> Song:
         track2_notes.append(Note(key=key, start_beat=start_beat, 
                                 duration_beats=duration_beats))
     
-    track2 = Track(name="Bass Low", intensity=2.0, delay=False, 
-                   hold_seconds=2.0, notes=track2_notes)
+    track2 = Track(name="Base Low", intensity=1.0, delay=True, 
+                   hold_seconds=0.8, notes=track2_notes)
     
-    # Track 3: Bass high (I=2, delay=off, d=2)
+    # Track 3: Base high (I=1, delay=on, d=0.8)
     notes_3 = [30, 33, 37, 37, 37]
     
     track3_notes = []
@@ -203,10 +203,10 @@ def create_piano_song_preset() -> Song:
         track3_notes.append(Note(key=key, start_beat=start_beat, 
                                 duration_beats=duration_beats))
     
-    track3 = Track(name="Bass High", intensity=2.0, delay=False, 
-                   hold_seconds=2.0, notes=track3_notes)
+    track3 = Track(name="Base High", intensity=1.0, delay=True, 
+                   hold_seconds=0.8, notes=track3_notes)
     
-    # Track 4: Arpeggio (I=2, delay=on, d=0.5)
+    # Track 4: Arpeggio (I=1, delay=on, d=0.8)
     tempo_list_3 = [16 + i * 0.5 for i in range(65)]
     notes_4 = [18,25,30,25,33,30,25,30,18,25,33,25,33,30,25,30,
                21,28,33,28,37,33,28,33,21,28,33,28,37,33,28,33,
@@ -226,8 +226,8 @@ def create_piano_song_preset() -> Song:
         track4_notes.append(Note(key=key, start_beat=start_beat, 
                                 duration_beats=duration_beats))
     
-    track4 = Track(name="Arpeggio", intensity=2.0, delay=True, 
-                   hold_seconds=0.5, notes=track4_notes)
+    track4 = Track(name="Arpeggio", intensity=1.0, delay=True, 
+                   hold_seconds=0.8, notes=track4_notes)
     
     return Song(bpm=bpm, tracks=[track1, track2, track3, track4])
 
@@ -525,12 +525,12 @@ def main():
     st.divider()
     
     # ========== PATTERN → BASE PANEL ==========
-    st.subheader("🎸 Pattern → Base — Ordered bass from digit pattern")
-    st.caption("Enter a pattern sequence (e.g., Pi digits `3-1-4-1-5`) to generate a bass line "
+    st.subheader("🎵 Pattern → Base — Ordered notes from digit pattern")
+    st.caption("Enter a pattern sequence (e.g., Pi digits `3-1-4-1-5`) to generate notes in low register "
               "with those pitches in order • AI assigns durations from style MIDIs • "
-              "Digits are degrees/offsets, not literal piano keys 1-5")
+              "Digits are degrees/offsets, not literal piano keys 1-5 • Uses same piano synth as melody")
     st.caption("Los dígitos son grados de patrón, no teclas crudas 1-5 • "
-              "Ejemplo Pi `31415` → bajo con esos tonos relativos en orden")
+              "Ejemplo Pi `31415` → notas con esos tonos relativos en orden • Mismo sintetizador de piano")
     
     col1, col2 = st.columns([2, 1])
     
@@ -555,7 +555,7 @@ def main():
     with col1:
         if pattern_mode == "offset":
             bass_offset = st.number_input(
-                "Bass Offset",
+                "Pattern Offset",
                 min_value=0,
                 max_value=40,
                 value=10,
@@ -563,11 +563,11 @@ def main():
             )
         else:
             bass_tonic = st.number_input(
-                "Bass Tonic",
+                "Pattern Tonic",
                 min_value=1,
                 max_value=40,
                 value=16,
-                help="Root key in bass register (16 = E0, 28 = E1)"
+                help="Root key in low register (16 = E0, 28 = E1)"
             )
             bass_scale_mode = st.selectbox(
                 "Scale Mode",
@@ -582,7 +582,7 @@ def main():
             min_value=1,
             max_value=88,
             value=28,
-            help="Lowest bass note allowed (28 = E1)"
+            help="Lowest note allowed (28 = E1)"
         )
     
     with col3:
@@ -591,7 +591,7 @@ def main():
             min_value=1,
             max_value=88,
             value=42,
-            help="Highest bass note allowed (42 = F#2)"
+            help="Highest note allowed (42 = F#2)"
         )
     
     col1, col2, col3 = st.columns(3)
@@ -637,7 +637,7 @@ def main():
             key="pattern_bass_bpm"
         )
     
-    if st.button("🎸 Generate Pattern Bass / Generar Bajo de Patrón", type="primary", use_container_width=True):
+    if st.button("🎵 Generate Pattern / Generar Patrón", type="primary", use_container_width=True):
         try:
             if not selected_bass_styles:
                 st.error("⚠️ Select at least one style MIDI / Selecciona al menos un MIDI de estilo")
@@ -649,8 +649,8 @@ def main():
                     demo_song = load_midi(str(demo_path))
                     style_tracks.extend(demo_song.tracks)
                 
-                # Generate pattern bass
-                with st.spinner("Generating pattern bass... / Generando bajo de patrón..."):
+                # Generate pattern track
+                with st.spinner("Generating pattern... / Generando patrón..."):
                     if pattern_mode == "offset":
                         bass_track = generate_pattern_bass(
                             pattern_string=pattern_string,
@@ -680,8 +680,8 @@ def main():
                 # Update song BPM
                 st.session_state.song.bpm = pattern_bass_bpm
                 
-                # Mark as Base track
-                bass_track.name = f"🎸 Base: {bass_track.name}"
+                # Mark as Base track (role can be assigned by user later)
+                bass_track.name = f"🎵 Pattern: {bass_track.name}"
                 
                 # Add to song
                 st.session_state.song.tracks.append(bass_track)
@@ -693,18 +693,20 @@ def main():
                 else:
                     key_range = "N/A"
                 
-                st.success(f"✓ Generated {len(bass_track.notes)} bass notes "
-                         f"(key range: {key_range}). Track added as Base.")
+                st.success(f"✓ Generated {len(bass_track.notes)} pattern notes "
+                         f"(key range: {key_range}). Track added. Assign Base role if needed.")
                 st.rerun()
         
         except Exception as e:
-            st.error(f"Error generating pattern bass: {str(e)}")
+            st.error(f"Error generating pattern: {str(e)}")
     
     st.divider()
     
     # ========== TRACKS STUDIO ==========
     st.subheader("🎛️ Tracks Studio")
     st.caption("Add tracks • Assign roles (Solo/Base/Adorn) • Generate AI fills • Edit notes • Set FX")
+    st.info("ℹ️ **Same piano synth for every track** • Base/Bass is a role + register, not a different instrument • "
+            "Adjust Intensity/Hold/Delay FX per track")
     
     # Play controls and BPM
     col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 1, 2])
@@ -846,21 +848,28 @@ def main():
                                  if i != track_idx and "Solo" not in t.name]
                 
                 with col1:
-                    if st.button("Bass Line", key=f"gen_bass_{track_idx}", 
-                               help="Generate bass (keys 1-28) from other tracks",
+                    if st.button("Base Line", key=f"gen_bass_{track_idx}", 
+                               help="Generate base line (keys 1-28) from other tracks using piano synth",
                                width='stretch'):
                         if mashup_sources:
                             try:
-                                gen_func = PATTERN_GENERATORS["bass_line"]
-                                new_notes = gen_func(
-                                    mashup_sources, 
-                                    st.session_state.song.bpm,
-                                    key_lo=1,
-                                    key_hi=28
+                                gen_config = PATTERN_GENERATORS["bass_line"]
+                                gen_func = gen_config["generator"]
+                                params = gen_config["default_params"]
+                                new_track = gen_func(
+                                    mashup_sources,
+                                    key_range=(1, 28),
+                                    num_beats=16.0,
+                                    bpm=st.session_state.song.bpm,
+                                    intensity=params.get("intensity", 1.0),
+                                    hold_seconds=params.get("hold_seconds", 0.8)
                                 )
-                                track.notes = new_notes
-                                track.name = "🎸 Base: Bass Line"
-                                st.success(f"✓ Generated {len(new_notes)} bass notes")
+                                track.notes = new_track.notes
+                                track.intensity = params.get("intensity", 1.0)
+                                track.hold_seconds = params.get("hold_seconds", 0.8)
+                                track.delay = True
+                                track.name = "🎵 Base: Base Line"
+                                st.success(f"✓ Generated {len(track.notes)} base notes")
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Error: {str(e)}")
@@ -869,20 +878,27 @@ def main():
                 
                 with col2:
                     if st.button("Chord Base", key=f"gen_chords_{track_idx}",
-                               help="Generate chords (keys 29-52) from other tracks",
+                               help="Generate chords (keys 29-52) from other tracks using piano synth",
                                width='stretch'):
                         if mashup_sources:
                             try:
-                                gen_func = PATTERN_GENERATORS["chord_base"]
-                                new_notes = gen_func(
+                                gen_config = PATTERN_GENERATORS["chord_base"]
+                                gen_func = gen_config["generator"]
+                                params = gen_config["default_params"]
+                                new_track = gen_func(
                                     mashup_sources,
-                                    st.session_state.song.bpm,
-                                    key_lo=29,
-                                    key_hi=52
+                                    key_range=(29, 52),
+                                    num_beats=16.0,
+                                    bpm=st.session_state.song.bpm,
+                                    intensity=params.get("intensity", 1.0),
+                                    hold_seconds=params.get("hold_seconds", 0.8)
                                 )
-                                track.notes = new_notes
-                                track.name = "🎸 Base: Chords"
-                                st.success(f"✓ Generated {len(new_notes)} chord notes")
+                                track.notes = new_track.notes
+                                track.intensity = params.get("intensity", 1.0)
+                                track.hold_seconds = params.get("hold_seconds", 0.8)
+                                track.delay = False
+                                track.name = "🎵 Base: Chords"
+                                st.success(f"✓ Generated {len(track.notes)} chord notes")
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Error: {str(e)}")
@@ -891,20 +907,27 @@ def main():
                 
                 with col3:
                     if st.button("Adorn Pluck", key=f"gen_pluck_{track_idx}",
-                               help="Generate sparse plucks (keys 45-72)",
+                               help="Generate sparse plucks (keys 45-72) using piano synth",
                                width='stretch'):
                         if mashup_sources:
                             try:
-                                gen_func = PATTERN_GENERATORS["adorn_pluck"]
-                                new_notes = gen_func(
+                                gen_config = PATTERN_GENERATORS["adorn_pluck"]
+                                gen_func = gen_config["generator"]
+                                params = gen_config["default_params"]
+                                new_track = gen_func(
                                     mashup_sources,
-                                    st.session_state.song.bpm,
-                                    key_lo=45,
-                                    key_hi=72
+                                    key_range=(45, 72),
+                                    num_beats=16.0,
+                                    bpm=st.session_state.song.bpm,
+                                    intensity=params.get("intensity", 1.0),
+                                    hold_seconds=params.get("hold_seconds", 0.8)
                                 )
-                                track.notes = new_notes
+                                track.notes = new_track.notes
+                                track.intensity = params.get("intensity", 1.0)
+                                track.hold_seconds = params.get("hold_seconds", 0.8)
+                                track.delay = True
                                 track.name = "✨ Adorn: Pluck"
-                                st.success(f"✓ Generated {len(new_notes)} pluck notes")
+                                st.success(f"✓ Generated {len(track.notes)} pluck notes")
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Error: {str(e)}")
@@ -913,20 +936,28 @@ def main():
                 
                 with col4:
                     if st.button("Harmony Line", key=f"gen_harmony_{track_idx}",
-                               help="Harmonize melody (keys 45-72)",
+                               help="Harmonize melody (keys 45-72) using piano synth",
                                width='stretch'):
                         if mashup_sources:
                             try:
-                                gen_func = PATTERN_GENERATORS["harmony_line"]
-                                new_notes = gen_func(
+                                gen_config = PATTERN_GENERATORS["harmony_line"]
+                                gen_func = gen_config["generator"]
+                                params = gen_config["default_params"]
+                                new_track = gen_func(
                                     mashup_sources,
-                                    st.session_state.song.bpm,
-                                    key_lo=45,
-                                    key_hi=72
+                                    key_range=(45, 72),
+                                    num_beats=16.0,
+                                    bpm=st.session_state.song.bpm,
+                                    intensity=params.get("intensity", 1.0),
+                                    hold_seconds=params.get("hold_seconds", 0.8),
+                                    harmony_interval=params.get("harmony_interval", 7)
                                 )
-                                track.notes = new_notes
+                                track.notes = new_track.notes
+                                track.intensity = params.get("intensity", 1.0)
+                                track.hold_seconds = params.get("hold_seconds", 0.8)
+                                track.delay = True
                                 track.name = "✨ Adorn: Harmony"
-                                st.success(f"✓ Generated {len(new_notes)} harmony notes")
+                                st.success(f"✓ Generated {len(track.notes)} harmony notes")
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Error: {str(e)}")

@@ -610,6 +610,262 @@ def generate_number_melody(
     )
 
 
+def choose_offset_for_solo(
+    pattern_digits: List[int],
+    solo_track: Track,
+    min_key: int,
+    max_key: int
+) -> int:
+    """
+    Choose offset that harmonizes pattern with solo track.
+    
+    Strategy: Find offset that maximizes consonance (pitch class compatibility)
+    and keeps pattern in the target register under the solo.
+    
+    Args:
+        pattern_digits: List of pattern digits (e.g., [3, 1, 4, 1, 5])
+        solo_track: Solo track to harmonize with
+        min_key: Minimum allowed key for bass
+        max_key: Maximum allowed key for bass
+    
+    Returns:
+        Best offset value (0-40)
+        
+    Algorithm:
+        1. Extract pitch classes from solo (mod 12)
+        2. For each candidate offset (0-40):
+           - Map pattern digits to keys
+           - Score based on:
+             a. Consonance: How many pattern pitch classes are consonant with solo
+             b. Register: Prefer offsets that keep pattern in [min_key, max_key]
+        3. Return offset with best combined score
+    """
+    if not solo_track.notes or not pattern_digits:
+        # Fallback: middle of bass range
+        return (min_key + max_key) // 2 - min(pattern_digits)
+    
+    # Extract pitch classes from solo (mod 12)
+    # Piano key 1 = A (pitch class 9)
+    solo_pitch_classes = set()
+    for note in solo_track.notes:
+        pc = (note.key - 1) % 12
+        solo_pitch_classes.add(pc)
+    
+    # Consonant intervals (unison, thirds, fourths, fifths, sixths, octave)
+    CONSONANT_INTERVALS = {0, 3, 4, 5, 7, 8, 9, 12}
+    
+    best_offset = 10
+    best_score = -1
+    
+    # Try offsets from 0 to 40
+    for offset in range(0, 41):
+        # Map pattern digits to keys with this offset
+        pattern_keys = []
+        for digit in pattern_digits:
+            key = digit + offset
+            key = max(min_key, min(max_key, key))
+            pattern_keys.append(key)
+        
+        # Score 1: Consonance with solo
+        consonance_score = 0
+        for pattern_key in pattern_keys:
+            pattern_pc = (pattern_key - 1) % 12
+            
+            # Check intervals with all solo pitch classes
+            for solo_pc in solo_pitch_classes:
+                interval = abs(pattern_pc - solo_pc)
+                # Consider both upward and downward intervals
+                interval = min(interval, 12 - interval)
+                
+                if interval in CONSONANT_INTERVALS:
+                    consonance_score += 1
+        
+        # Score 2: Register fitness (prefer middle of bass range)
+        avg_key = sum(pattern_keys) / len(pattern_keys)
+        target_center = (min_key + max_key) / 2
+        register_score = 1.0 / (1.0 + abs(avg_key - target_center) * 0.5)
+        
+        # Combined score (weighted)
+        total_score = consonance_score + register_score * 5.0
+        
+        if total_score > best_score:
+            best_score = total_score
+            best_offset = offset
+    
+    return best_offset
+
+
+def generate_pattern_bass_from_solo(
+    pattern_string: str,
+    solo_track: Track,
+    style_tracks: List[Track],
+    bpm: float = 96.0,
+    offset_mode: Literal["manual", "auto"] = "auto",
+    manual_offset: int = 10,
+    min_key: int = 28,
+    max_key: int = 42,
+    duration_strategy: Literal["mode", "median", "random"] = "mode",
+    intensity: float = 2.0,
+    hold_seconds: float = 2.0,
+    loop_pattern: bool = True,
+    track_name: Optional[str] = None
+) -> Track:
+    """
+    Generate ordered bass track from pattern that harmonizes under a Solo track.
+    
+    This is the evolved Pattern → Base feature that considers Solo for:
+    - Auto-choosing offset to harmonize with solo pitch classes
+    - Stretching/looping pattern timing to match solo span
+    
+    Args:
+        pattern_string: Pattern sequence (e.g., "3-1-4-1-5")
+        solo_track: Solo track to harmonize with (required for auto offset and timing)
+        style_tracks: Tracks to learn durations from (can be from multiple MIDIs)
+        bpm: Tempo (default 96)
+        offset_mode: "manual" (use manual_offset) or "auto" (choose offset from solo)
+        manual_offset: For manual mode, add this to each digit
+        min_key: Minimum bass key (default 28 = E1)
+        max_key: Maximum bass key (default 42 = F#2)
+        duration_strategy: How to pick duration from histogram (mode/median/random)
+        intensity: Track intensity parameter (default 2.0 for bass)
+        hold_seconds: Track hold parameter (default 2.0 for bass sustain)
+        loop_pattern: If True, loop pattern to fill solo span; if False, stretch timing
+        track_name: Custom track name (default auto-generated)
+    
+    Returns:
+        Generated bass Track with ordered pattern notes harmonized under solo
+    
+    Example:
+        >>> # Solo track exists with span 0-16 beats
+        >>> # Pattern "3-1-4-1-5" auto-harmonized under solo
+        >>> style_songs = [load_midi("demos/chopin-etude.mid")]
+        >>> style_tracks = []
+        >>> for song in style_songs:
+        ...     style_tracks.extend(song.tracks)
+        >>> solo = Track(name="Solo", notes=[...])
+        >>> track = generate_pattern_bass_from_solo(
+        ...     "3-1-4-1-5",
+        ...     solo_track=solo,
+        ...     style_tracks=style_tracks,
+        ...     offset_mode="auto",  # Auto-choose offset from solo
+        ...     min_key=28,
+        ...     max_key=42,
+        ...     bpm=96.0
+        ... )
+        >>> len(track.notes) >= 5  # At least one pattern iteration
+        True
+    """
+    # 1. Parse pattern string (supports dash or comma separators)
+    pattern_string = pattern_string.replace(",", "-")
+    digits = []
+    for part in pattern_string.split("-"):
+        part = part.strip()
+        if part.isdigit():
+            digits.append(int(part))
+    
+    if not digits:
+        # No valid digits found, return empty track
+        return Track(
+            name=track_name or "Pattern Bass from Solo (empty)",
+            intensity=intensity,
+            hold_seconds=hold_seconds,
+            notes=[]
+        )
+    
+    # 2. Choose offset (manual or auto from solo)
+    if offset_mode == "auto":
+        bass_offset = choose_offset_for_solo(digits, solo_track, min_key, max_key)
+    else:
+        bass_offset = manual_offset
+    
+    # 3. Map pattern digits to bass keys
+    keys = []
+    for digit in digits:
+        key = digit + bass_offset
+        # Clamp to bass range
+        key = max(min_key, min(max_key, key))
+        keys.append(key)
+    
+    # 4. Build duration model from style tracks
+    duration_model = build_duration_model(style_tracks)
+    
+    # 5. Predict durations for one pattern iteration
+    durations = predict_durations(keys, duration_model, strategy=duration_strategy)
+    
+    # 6. Determine solo span for timing
+    if solo_track.notes:
+        solo_start = min(n.start_beat for n in solo_track.notes)
+        solo_end = max(n.start_beat + n.duration_beats for n in solo_track.notes)
+        solo_span = solo_end - solo_start
+    else:
+        # No solo notes, use default span
+        solo_span = sum(durations)
+    
+    # 7. Create notes with timing stretched/looped to match solo span
+    notes = []
+    current_beat = 0.0
+    pattern_duration = sum(durations)
+    
+    if loop_pattern and pattern_duration > 0:
+        # Loop pattern to fill solo span
+        iterations_needed = max(1, int(solo_span / pattern_duration) + 1)
+        
+        for iteration in range(iterations_needed):
+            for key, duration in zip(keys, durations):
+                if current_beat >= solo_span:
+                    break
+                
+                # Clamp duration to not exceed solo span
+                actual_duration = min(duration, solo_span - current_beat)
+                if actual_duration <= 0:
+                    break
+                
+                note = Note(
+                    key=key,
+                    start_beat=current_beat,
+                    duration_beats=actual_duration,
+                    velocity=100
+                )
+                notes.append(note)
+                current_beat += actual_duration
+            
+            if current_beat >= solo_span:
+                break
+    else:
+        # Single pattern iteration, stretch timing to fit solo span if needed
+        if solo_span > pattern_duration and pattern_duration > 0:
+            # Stretch: multiply all durations proportionally
+            stretch_factor = solo_span / pattern_duration
+            stretched_durations = [d * stretch_factor for d in durations]
+        else:
+            stretched_durations = durations
+        
+        for key, duration in zip(keys, stretched_durations):
+            note = Note(
+                key=key,
+                start_beat=current_beat,
+                duration_beats=duration,
+                velocity=100
+            )
+            notes.append(note)
+            current_beat += duration
+    
+    # 8. Create and return Track
+    if track_name is None:
+        # Auto-generate name
+        pattern_prefix = pattern_string[:15].replace(" ", "")
+        offset_label = f"auto@{bass_offset}" if offset_mode == "auto" else f"offset{bass_offset}"
+        track_name = f"Pattern Bass from Solo ({pattern_prefix}, {offset_label})"
+    
+    return Track(
+        name=track_name,
+        intensity=intensity,
+        hold_seconds=hold_seconds,
+        delay=False,  # Bass typically doesn't use delay
+        notes=notes
+    )
+
+
 def generate_pattern_bass(
     pattern_string: str,
     style_tracks: List[Track],

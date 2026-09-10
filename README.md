@@ -16,6 +16,7 @@ Note Stack V1 is a Streamlit web application for composing and synthesizing pian
 - **Demo Presets**: Includes the original "Piano Song" from Desmos
 - **🔢 Number Melody**: Transform digit sequences (Pi, Fibonacci, dates) into melodies with learned durations
 - **🎸 Pattern → Base**: Generate ordered bass lines from digit patterns (e.g., Pi "3-1-4-1-5" → bass with those degrees)
+- **🎸🎵 Fill Base from Solo**: Generate ordered bass from pattern that harmonizes under an existing Solo track with AI-chosen offset
 - **🤖 AI Track Generation**: Heuristic-based bass, chord, harmony, and adornment generators
 
 ## Studio UI
@@ -114,6 +115,32 @@ Generate bass lines that follow a specific ordered pattern! Unlike AI Fill Bass 
 - Custom sequences: `5-3-1-2-4-6-5-3`
 
 The AI assigns durations based on the jump patterns in your style MIDIs, creating a musically flowing bass line that follows your exact pitch sequence.
+
+### Fill Base from Solo
+
+Evolve your cluster/pattern notes into an **ordered Base fill under a Solo** track! This feature takes an existing Solo track and generates a harmonized bass line from your pattern, with AI-powered offset selection and timing that matches the Solo's span.
+
+**Example workflow:**
+1. Generate a Solo track first (use Number Melody)
+2. Open the "Fill Base from Solo" expander
+3. Enter pattern: `3-1-4-1-5` (Pi digits)
+4. Choose offset mode:
+   - **Auto from Solo**: AI picks offset to harmonize with Solo pitch classes (avoids clashes, maximizes consonance)
+   - **Manual**: Specify offset manually
+5. Set bass range: min=28 (E1), max=42 (F#2)
+6. Select style MIDIs for duration learning (optional)
+7. Generate → Creates Base track harmonized under Solo with pattern timing stretched/looped to match Solo span
+
+**Key features:**
+- **Auto-harmonization**: AI analyzes Solo pitch classes and chooses offset for best consonance (unison, thirds, fourths, fifths)
+- **Register optimization**: Keeps bass in target range under Solo
+- **Timing sync**: Pattern loops or stretches to fill Solo span
+- **Piano FX defaults**: Base track uses intensity=2.0, hold=2.0 for rich bass tone
+
+**Use cases:**
+- Pi melody + Pi bass harmonized: Solo from Pi → Base from same Pi pattern auto-harmonized
+- Custom melody + Fibonacci bass: Solo (any) → Base from Fibonacci sequence `1-1-2-3-5-8`
+- Experimentation: Try different patterns under same Solo to find best harmony
 
 ### AI Track Generation
 

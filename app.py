@@ -15,7 +15,12 @@ from collections import defaultdict
 from notes import Song, Track, Note
 from synth import synthesize_song, export_wav
 from midi_io import load_midi, export_midi
-from number_melody import generate_number_melody, generate_pattern_bass, SCALE_MODES
+from number_melody import (
+    generate_number_melody, 
+    generate_pattern_bass, 
+    generate_pattern_bass_from_solo,
+    SCALE_MODES
+)
 from pattern_generators import PATTERN_GENERATORS
 
 
@@ -897,6 +902,181 @@ def main():
         
         except Exception as e:
             st.error(f"Error generating pattern bass: {str(e)}")
+    
+    st.divider()
+    
+    # ========== FILL BASE FROM SOLO ==========
+    with st.expander("🎸🎵 Fill Base from Solo — Ordered pattern harmonized under Solo", expanded=False):
+        st.caption("Given an existing Solo track, pick notes in a fixed order (pattern) and fill a Base track with those pitches "
+                  "harmonized under the Solo • AI can auto-choose offset to fit with Solo pitch classes • "
+                  "Timing stretches/loops to match Solo span")
+        st.caption("Requiere una pista Solo existente • Patrón ordenado armonizado bajo Solo • "
+                  "IA puede elegir offset automático para armonizar")
+        
+        # Check if we have a Solo track
+        solo_tracks = [t for t in st.session_state.song.tracks if "Solo" in t.name or "solo" in t.name.lower()]
+        
+        if not solo_tracks:
+            st.warning("⚠️ No Solo track found. Generate a Number Melody first (it will be marked as Solo).")
+            st.caption("No se encontró pista Solo. Genera una Number Melody primero.")
+        else:
+            st.success(f"✓ Found {len(solo_tracks)} Solo track(s): {', '.join(t.name for t in solo_tracks[:3])}")
+            
+            col1, col2 = st.columns([2, 1])
+            
+            with col1:
+                solo_pattern_string = st.text_input(
+                    "Pattern String / Cadena de Patrón",
+                    value="3-1-4-1-5",
+                    help="Enter digit sequence (e.g., 3-1-4-1-5) | Introduce secuencia de dígitos",
+                    key="solo_pattern_string"
+                )
+            
+            with col2:
+                solo_offset_mode = st.radio(
+                    "Offset Mode / Modo Offset",
+                    options=["Auto from Solo", "Manual"],
+                    index=0,
+                    help="Auto: AI picks offset to harmonize with Solo | Manual: specify offset",
+                    key="solo_offset_mode"
+                )
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                if solo_offset_mode == "Manual":
+                    solo_manual_offset = st.number_input(
+                        "Manual Offset",
+                        min_value=0,
+                        max_value=40,
+                        value=10,
+                        help="Add this to each digit (e.g., 3 + 10 = key 13)",
+                        key="solo_manual_offset"
+                    )
+                else:
+                    st.caption("**Offset:** Auto-chosen by AI")
+                    st.caption("AI will pick offset that harmonizes with Solo pitch classes")
+            
+            with col2:
+                solo_min_key = st.number_input(
+                    "Min Key",
+                    min_value=1,
+                    max_value=88,
+                    value=28,
+                    help="Lowest bass note allowed (28 = E1)",
+                    key="solo_min_key"
+                )
+            
+            with col3:
+                solo_max_key = st.number_input(
+                    "Max Key",
+                    min_value=1,
+                    max_value=88,
+                    value=42,
+                    help="Highest bass note allowed (42 = F#2)",
+                    key="solo_max_key"
+                )
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                # Style sources for duration learning
+                demos_dir = Path("demos")
+                demo_files = []
+                if demos_dir.exists():
+                    demo_files = sorted([f.stem for f in demos_dir.glob("*.mid")])
+                
+                selected_solo_bass_styles = st.multiselect(
+                    "Style MIDIs / MIDIs de estilo",
+                    demo_files,
+                    default=demo_files[:2] if len(demo_files) >= 2 else demo_files,
+                    help="Select MIDIs to learn durations | Selecciona MIDIs para aprender duraciones",
+                    key="solo_bass_styles"
+                )
+            
+            with col2:
+                solo_duration_strategy = st.radio(
+                    "Duration / Duración",
+                    options=["mode", "median", "random"],
+                    index=0,
+                    help="How to pick duration: mode (most common)",
+                    key="solo_duration_strategy"
+                )
+            
+            with col3:
+                solo_loop_pattern = st.checkbox(
+                    "Loop Pattern",
+                    value=True,
+                    help="Loop pattern to fill Solo span (if unchecked, stretches timing)",
+                    key="solo_loop_pattern"
+                )
+            
+            if st.button("🎸 Fill Base from Solo / Llenar Bajo desde Solo", 
+                        type="primary", 
+                        use_container_width=True,
+                        key="fill_base_from_solo_btn"):
+                try:
+                    if not selected_solo_bass_styles:
+                        st.warning("💡 No style MIDIs selected. Using fallback durations (0.5 beats).")
+                        style_tracks = []
+                    else:
+                        # Load style tracks
+                        style_tracks = []
+                        for demo_name in selected_solo_bass_styles:
+                            demo_path = demos_dir / f"{demo_name}.mid"
+                            demo_song = load_midi(str(demo_path))
+                            style_tracks.extend(demo_song.tracks)
+                    
+                    # Use first solo track found
+                    primary_solo = solo_tracks[0]
+                    
+                    # Generate pattern bass from solo
+                    with st.spinner("Generating bass from Solo pattern... / Generando bajo desde patrón Solo..."):
+                        if solo_offset_mode == "Auto from Solo":
+                            bass_track = generate_pattern_bass_from_solo(
+                                pattern_string=solo_pattern_string,
+                                solo_track=primary_solo,
+                                style_tracks=style_tracks if style_tracks else [],
+                                bpm=st.session_state.song.bpm,
+                                offset_mode="auto",
+                                min_key=solo_min_key,
+                                max_key=solo_max_key,
+                                duration_strategy=solo_duration_strategy,
+                                loop_pattern=solo_loop_pattern
+                            )
+                        else:
+                            bass_track = generate_pattern_bass_from_solo(
+                                pattern_string=solo_pattern_string,
+                                solo_track=primary_solo,
+                                style_tracks=style_tracks if style_tracks else [],
+                                bpm=st.session_state.song.bpm,
+                                offset_mode="manual",
+                                manual_offset=solo_manual_offset,
+                                min_key=solo_min_key,
+                                max_key=solo_max_key,
+                                duration_strategy=solo_duration_strategy,
+                                loop_pattern=solo_loop_pattern
+                            )
+                    
+                    # Mark as Base track
+                    bass_track.name = f"🎸 Base: {bass_track.name}"
+                    
+                    # Add to song
+                    st.session_state.song.tracks.append(bass_track)
+                    
+                    # Show key range
+                    if bass_track.notes:
+                        keys = [n.key for n in bass_track.notes]
+                        key_range = f"{min(keys)}-{max(keys)}"
+                    else:
+                        key_range = "N/A"
+                    
+                    st.success(f"✓ Generated {len(bass_track.notes)} bass notes harmonized under Solo "
+                             f"(key range: {key_range}). Track added as Base.")
+                    st.rerun()
+                
+                except Exception as e:
+                    st.error(f"Error generating bass from solo: {str(e)}")
     
     st.divider()
     

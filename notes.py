@@ -1,7 +1,7 @@
 """Data model for Note Stack."""
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Any
 
 
 @dataclass
@@ -24,6 +24,7 @@ class Track:
     notes: List[Note] = field(default_factory=list)
     loop_enabled: bool = False  # Enable looping for this track
     loop_length_beats: float = 4.0  # Loop length (or 0 for "until song end")
+    audio_fx: List[Any] = field(default_factory=list)  # Post-synth mood FX chain (AudioEffect objects)
 
 
 @dataclass

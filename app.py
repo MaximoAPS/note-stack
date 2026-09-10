@@ -1316,61 +1316,65 @@ def main():
                         st.caption("💡 Track will repeat its pattern across the song timeline")
                 
                 # FX Calibration (add effects on demand)
-                st.write("**🎛️ FX / Efectos**")
+                st.write("**🎛️ Synth Params / Audio FX**")
+                st.caption("**Synth:** Intensity/Delay/Hold control piano synthesis • **Audio FX:** Post-synth mood effects (stackable)")
                 
-                # Initialize active effects for this track in session state
-                if f"active_fx_{track_idx}" not in st.session_state:
-                    st.session_state[f"active_fx_{track_idx}"] = set()
+                # Initialize active synth effects for this track in session state
+                if f"active_synth_fx_{track_idx}" not in st.session_state:
+                    st.session_state[f"active_synth_fx_{track_idx}"] = set()
                 
-                active_fx = st.session_state[f"active_fx_{track_idx}"]
+                active_synth_fx = st.session_state[f"active_synth_fx_{track_idx}"]
                 
-                # Add effect button and selector
+                # ========== SYNTH PARAMS SECTION ==========
+                st.write("**Synth Params** (piano synthesis)")
+                
+                # Add synth effect button and selector
                 col1, col2, col3 = st.columns([1, 1, 2])
                 
                 with col1:
-                    available_effects = []
-                    if "intensity" not in active_fx:
-                        available_effects.append("Intensity")
-                    if "delay" not in active_fx:
-                        available_effects.append("Delay")
-                    if "hold" not in active_fx:
-                        available_effects.append("Hold")
+                    available_synth_effects = []
+                    if "intensity" not in active_synth_fx:
+                        available_synth_effects.append("Intensity")
+                    if "delay" not in active_synth_fx:
+                        available_synth_effects.append("Delay")
+                    if "hold" not in active_synth_fx:
+                        available_synth_effects.append("Hold")
                     
-                    if available_effects:
-                        effect_to_add = st.selectbox(
-                            "Select effect",
-                            available_effects,
-                            key=f"fx_select_{track_idx}",
+                    if available_synth_effects:
+                        synth_effect_to_add = st.selectbox(
+                            "Select synth param",
+                            available_synth_effects,
+                            key=f"synth_fx_select_{track_idx}",
                             label_visibility="collapsed"
                         )
                 
                 with col2:
-                    if available_effects and st.button("➕ Agregar efecto / Add effect", key=f"add_fx_{track_idx}", width='stretch'):
-                        # Add the selected effect
-                        effect_key = effect_to_add.lower()
-                        active_fx.add(effect_key)
-                        st.session_state[f"active_fx_{track_idx}"] = active_fx
+                    if available_synth_effects and st.button("➕ Add synth param", key=f"add_synth_fx_{track_idx}", width='stretch'):
+                        # Add the selected synth effect
+                        effect_key = synth_effect_to_add.lower()
+                        active_synth_fx.add(effect_key)
+                        st.session_state[f"active_synth_fx_{track_idx}"] = active_synth_fx
                         st.rerun()
                 
                 with col3:
                     if st.button("🔄 Piano Defaults", key=f"fx_reset_{track_idx}",
-                               help="Reset FX to piano defaults: I=1.0, hold=0.8s, delay=on",
+                               help="Reset synth params to piano defaults: I=1.0, hold=0.8s, delay=on",
                                width='stretch'):
                         # Set piano defaults
                         track.intensity = 1.0
                         track.hold_seconds = 0.8
                         track.delay = True
-                        # Activate all effects to show piano defaults
-                        st.session_state[f"active_fx_{track_idx}"] = {"intensity", "delay", "hold"}
+                        # Activate all synth effects to show piano defaults
+                        st.session_state[f"active_synth_fx_{track_idx}"] = {"intensity", "delay", "hold"}
                         st.success("✓ Piano defaults set")
                         st.rerun()
                 
-                # Display active effects with their controls
-                if active_fx:
-                    st.caption(f"**Active effects:** {', '.join(sorted(active_fx)).title()}")
+                # Display active synth effects with their controls
+                if active_synth_fx:
+                    st.caption(f"**Active synth params:** {', '.join(sorted(active_synth_fx)).title()}")
                     
                     # Intensity effect
-                    if "intensity" in active_fx:
+                    if "intensity" in active_synth_fx:
                         col1, col2 = st.columns([3, 1])
                         with col1:
                             track.intensity = st.slider(
@@ -1382,13 +1386,13 @@ def main():
                             )
                             st.caption("1.0=melody, 2.0=bass")
                         with col2:
-                            if st.button("🗑️", key=f"remove_intensity_{track_idx}", help="Remove Intensity effect"):
-                                active_fx.discard("intensity")
-                                st.session_state[f"active_fx_{track_idx}"] = active_fx
+                            if st.button("🗑️", key=f"remove_intensity_{track_idx}", help="Remove Intensity param"):
+                                active_synth_fx.discard("intensity")
+                                st.session_state[f"active_synth_fx_{track_idx}"] = active_synth_fx
                                 st.rerun()
                     
                     # Delay effect
-                    if "delay" in active_fx:
+                    if "delay" in active_synth_fx:
                         col1, col2 = st.columns([3, 1])
                         with col1:
                             track.delay = st.checkbox(
@@ -1399,13 +1403,13 @@ def main():
                             )
                             st.caption("Echo at 30/160s")
                         with col2:
-                            if st.button("🗑️", key=f"remove_delay_{track_idx}", help="Remove Delay effect"):
-                                active_fx.discard("delay")
-                                st.session_state[f"active_fx_{track_idx}"] = active_fx
+                            if st.button("🗑️", key=f"remove_delay_{track_idx}", help="Remove Delay param"):
+                                active_synth_fx.discard("delay")
+                                st.session_state[f"active_synth_fx_{track_idx}"] = active_synth_fx
                                 st.rerun()
                     
                     # Hold effect
-                    if "hold" in active_fx:
+                    if "hold" in active_synth_fx:
                         col1, col2 = st.columns([3, 1])
                         with col1:
                             track.hold_seconds = st.slider(
@@ -1417,12 +1421,211 @@ def main():
                             )
                             st.caption("0.5=short, 0.8=piano, 2.0=long")
                         with col2:
-                            if st.button("🗑️", key=f"remove_hold_{track_idx}", help="Remove Hold effect"):
-                                active_fx.discard("hold")
-                                st.session_state[f"active_fx_{track_idx}"] = active_fx
+                            if st.button("🗑️", key=f"remove_hold_{track_idx}", help="Remove Hold param"):
+                                active_synth_fx.discard("hold")
+                                st.session_state[f"active_synth_fx_{track_idx}"] = active_synth_fx
                                 st.rerun()
                 else:
-                    st.caption("💡 No effects active. Add effects above to calibrate this track's sound.")
+                    st.caption("💡 No synth params active. Add params above to calibrate synthesis.")
+                
+                st.write("---")
+                
+                # ========== AUDIO FX SECTION ==========
+                st.write("**Audio FX** (post-synth mood effects • stackable • order matters)")
+                
+                col1, col2 = st.columns([1, 1])
+                
+                with col1:
+                    # Mood FX selector
+                    mood_fx_options = ["Distortion", "Chorus", "Tremolo", "Flanger", "Wah", "Pitch"]
+                    selected_mood_fx = st.selectbox(
+                        "Select mood effect",
+                        mood_fx_options,
+                        key=f"mood_fx_select_{track_idx}",
+                        label_visibility="collapsed"
+                    )
+                
+                with col2:
+                    if st.button("➕ Agregar efecto / Add effect", key=f"add_mood_fx_{track_idx}", width='stretch'):
+                        # Add the selected mood FX
+                        from audio_fx import create_default_effect
+                        
+                        # Create effect with defaults
+                        new_fx = create_default_effect(selected_mood_fx)
+                        track.audio_fx.append(new_fx)
+                        st.success(f"✓ Added {selected_mood_fx}")
+                        st.rerun()
+                
+                # Display active audio FX chain
+                if track.audio_fx and len(track.audio_fx) > 0:
+                    st.caption(f"**Active FX chain** ({len(track.audio_fx)} effect(s)): " + 
+                              " → ".join([fx.effect_type.title() for fx in track.audio_fx]))
+                    
+                    # Display each effect with controls
+                    for fx_idx, fx in enumerate(track.audio_fx):
+                        st.write(f"**{fx_idx + 1}. {fx.effect_type.title()}**")
+                        
+                        # Controls vary by effect type
+                        if fx.effect_type == "distortion":
+                            col1, col2, col3 = st.columns([2, 2, 1])
+                            with col1:
+                                fx.drive_db = st.slider(
+                                    "Drive (dB)",
+                                    0.0, 30.0,
+                                    fx.drive_db, 0.5,
+                                    key=f"distortion_drive_{track_idx}_{fx_idx}",
+                                    help="Distortion amount (0=clean, 30=heavy)"
+                                )
+                            with col2:
+                                fx.mix = st.slider(
+                                    "Mix (dry/wet)",
+                                    0.0, 1.0,
+                                    fx.mix, 0.05,
+                                    key=f"distortion_mix_{track_idx}_{fx_idx}",
+                                    help="0=dry, 1=wet"
+                                )
+                            with col3:
+                                if st.button("🗑️", key=f"remove_fx_{track_idx}_{fx_idx}", help="Remove effect"):
+                                    track.audio_fx.pop(fx_idx)
+                                    st.rerun()
+                        
+                        elif fx.effect_type == "chorus":
+                            col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+                            with col1:
+                                fx.rate_hz = st.slider(
+                                    "Rate (Hz)",
+                                    0.1, 5.0,
+                                    fx.rate_hz, 0.1,
+                                    key=f"chorus_rate_{track_idx}_{fx_idx}",
+                                    help="LFO speed"
+                                )
+                            with col2:
+                                fx.depth = st.slider(
+                                    "Depth",
+                                    0.0, 1.0,
+                                    fx.depth, 0.05,
+                                    key=f"chorus_depth_{track_idx}_{fx_idx}",
+                                    help="Modulation depth"
+                                )
+                            with col3:
+                                fx.mix = st.slider(
+                                    "Mix",
+                                    0.0, 1.0,
+                                    fx.mix, 0.05,
+                                    key=f"chorus_mix_{track_idx}_{fx_idx}"
+                                )
+                            with col4:
+                                if st.button("🗑️", key=f"remove_fx_{track_idx}_{fx_idx}", help="Remove effect"):
+                                    track.audio_fx.pop(fx_idx)
+                                    st.rerun()
+                        
+                        elif fx.effect_type == "tremolo":
+                            col1, col2, col3 = st.columns([2, 2, 1])
+                            with col1:
+                                fx.rate_hz = st.slider(
+                                    "Rate (Hz)",
+                                    0.1, 20.0,
+                                    fx.rate_hz, 0.1,
+                                    key=f"tremolo_rate_{track_idx}_{fx_idx}",
+                                    help="Speed of amplitude modulation"
+                                )
+                            with col2:
+                                fx.depth = st.slider(
+                                    "Depth",
+                                    0.0, 1.0,
+                                    fx.depth, 0.05,
+                                    key=f"tremolo_depth_{track_idx}_{fx_idx}",
+                                    help="Modulation depth"
+                                )
+                            with col3:
+                                if st.button("🗑️", key=f"remove_fx_{track_idx}_{fx_idx}", help="Remove effect"):
+                                    track.audio_fx.pop(fx_idx)
+                                    st.rerun()
+                        
+                        elif fx.effect_type == "flanger":
+                            col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+                            with col1:
+                                fx.rate_hz = st.slider(
+                                    "Rate (Hz)",
+                                    0.1, 10.0,
+                                    fx.rate_hz, 0.1,
+                                    key=f"flanger_rate_{track_idx}_{fx_idx}",
+                                    help="LFO speed"
+                                )
+                            with col2:
+                                fx.depth = st.slider(
+                                    "Depth",
+                                    0.0, 1.0,
+                                    fx.depth, 0.05,
+                                    key=f"flanger_depth_{track_idx}_{fx_idx}"
+                                )
+                            with col3:
+                                fx.mix = st.slider(
+                                    "Mix",
+                                    0.0, 1.0,
+                                    fx.mix, 0.05,
+                                    key=f"flanger_mix_{track_idx}_{fx_idx}"
+                                )
+                            with col4:
+                                if st.button("🗑️", key=f"remove_fx_{track_idx}_{fx_idx}", help="Remove effect"):
+                                    track.audio_fx.pop(fx_idx)
+                                    st.rerun()
+                        
+                        elif fx.effect_type == "phaser":  # Wah
+                            col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+                            with col1:
+                                fx.rate_hz = st.slider(
+                                    "Rate (Hz)",
+                                    0.1, 10.0,
+                                    fx.rate_hz, 0.1,
+                                    key=f"wah_rate_{track_idx}_{fx_idx}",
+                                    help="Sweep speed"
+                                )
+                            with col2:
+                                fx.depth = st.slider(
+                                    "Depth",
+                                    0.0, 1.0,
+                                    fx.depth, 0.05,
+                                    key=f"wah_depth_{track_idx}_{fx_idx}"
+                                )
+                            with col3:
+                                fx.mix = st.slider(
+                                    "Mix",
+                                    0.0, 1.0,
+                                    fx.mix, 0.05,
+                                    key=f"wah_mix_{track_idx}_{fx_idx}"
+                                )
+                            with col4:
+                                if st.button("🗑️", key=f"remove_fx_{track_idx}_{fx_idx}", help="Remove effect"):
+                                    track.audio_fx.pop(fx_idx)
+                                    st.rerun()
+                        
+                        elif fx.effect_type == "pitch":
+                            col1, col2, col3 = st.columns([2, 2, 1])
+                            with col1:
+                                fx.semitones = st.slider(
+                                    "Pitch (semitones)",
+                                    -12.0, 12.0,
+                                    fx.semitones, 1.0,
+                                    key=f"pitch_semitones_{track_idx}_{fx_idx}",
+                                    help="Pitch shift (-12=octave down, +12=octave up)"
+                                )
+                            with col2:
+                                fx.mix = st.slider(
+                                    "Mix (dry/wet)",
+                                    0.0, 1.0,
+                                    fx.mix, 0.05,
+                                    key=f"pitch_mix_{track_idx}_{fx_idx}",
+                                    help="0=dry, 1=wet (harmony)"
+                                )
+                            with col3:
+                                if st.button("🗑️", key=f"remove_fx_{track_idx}_{fx_idx}", help="Remove effect"):
+                                    track.audio_fx.pop(fx_idx)
+                                    st.rerun()
+                        
+                        st.write("---")
+                else:
+                    st.caption("💡 No audio FX active. Add mood effects above for character (distortion, chorus, etc.)")
                 
                 # AI Fill buttons
                 st.write("**🤖 AI Fill Track** (V1 heuristics)")

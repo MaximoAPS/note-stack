@@ -264,7 +264,10 @@ def apply_lowpass_filter(signal: np.ndarray, cutoff_hz: float = 13000) -> np.nda
 
 
 def synthesize_track(track: Track, bpm: float, track_idx: int, total_beats: float) -> np.ndarray:
-    """Synthesize all notes in a track, optionally with delay voice."""
+    """
+    Synthesize all notes in a track, optionally with delay voice.
+    After synthesis, apply post-synth audio FX chain if track.audio_fx is set.
+    """
     duration_seconds = (total_beats * 60.0) / bpm
     # Add 3.5s padding for note tails (max tail length per note)
     num_samples = int((duration_seconds + 3.5) * SAMPLE_RATE)
@@ -305,6 +308,15 @@ def synthesize_track(track: Track, bpm: float, track_idx: int, total_beats: floa
                     delay_signal = delay_signal[:num_samples - delay_start]
                     delay_end = num_samples
                 signal[delay_start:delay_end] += delay_signal
+    
+    # Apply post-synth audio FX chain (dry/wet mood effects)
+    if track.audio_fx and len(track.audio_fx) > 0:
+        try:
+            from audio_fx import apply_effect_chain
+            signal = apply_effect_chain(signal, track.audio_fx, SAMPLE_RATE)
+        except Exception as e:
+            # If FX fails, continue with dry signal
+            print(f"Warning: FX chain failed on track {track.name}: {e}")
     
     return signal
 

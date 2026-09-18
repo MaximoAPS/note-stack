@@ -4,10 +4,17 @@ import argparse
 import random
 from collections import defaultdict
 from typing import List, Dict, Literal, Optional
-from statistics import mode, median
+from statistics import StatisticsError, mode, median
 
-from notes import Track, Note, Song
-from midi_io import load_midi, export_midi
+from midi_gpt import builtin_duration_model, builtin_jump_model
+from midi_io import export_midi, load_midi
+from notes import (
+    Note,
+    Song,
+    Track,
+    fit_durations_to_timbre,
+    piano_duration_beats,
+)
 
 
 # Scale interval patterns (semitones from tonic)
@@ -39,6 +46,17 @@ def parse_digit_string(s: str) -> List[int]:
     return [int(c) for c in s if c.isdigit()]
 
 
+def parse_pattern_digits(pattern_string: str) -> List[int]:
+    """Parse '3-1-4-1-5' or '3,1,4,1,5' into integers."""
+    normalized = pattern_string.replace(",", "-")
+    digits = []
+    for part in normalized.split("-"):
+        part = part.strip()
+        if part.isdigit():
+            digits.append(int(part))
+    return digits
+
+
 def chunk_digits(
     digits: List[int],
     chunk_mode: Literal["single", "pair_mod"] = "single",
@@ -61,7 +79,7 @@ def chunk_digits(
         >>> chunk_digits([3, 1, 4, 1, 5, 9], "single", 12)
         [3, 1, 4, 1, 5, 9]
         >>> chunk_digits([3, 1, 4, 1, 5, 9], "pair_mod", 12)
-        [7, 5, 9]  # 31%12=7, 41%12=5, 59%12=11 but wait, 59%12=11, not 9
+        [7, 5, 11]  # 31%12=7, 41%12=5, 59%12=11
         
     Note:
         For pair_mod with odd number of digits, the trailing digit is
@@ -139,6 +157,9 @@ def map_values_to_keys(
     if min_key is None:
         min_key = tonic
     
+    if min_key is not None and max_key is not None and min_key > max_key:
+        min_key, max_key = max_key, min_key
+
     if max_key is None:
         if chunk_mode == "pair_mod" and modulus == 12:
             # Chromatic: tonic + 11 semitones + octave spans
@@ -194,8 +215,8 @@ def map_values_to_keys(
             octave_offset = (value // len(scale_degrees)) % octave_range
             key = tonic + pitch_class + octave_offset * 12
         
-        # Clamp to valid piano range and max_key
-        key = max(1, min(88, min(key, max_key)))
+        key = max(1, min(88, key))
+        key = max(min_key, min(max_key, key))
         
         keys.append(key)
     
@@ -339,6 +360,18 @@ def build_jump_model(
     return dict(jump_counts)
 
 
+def resolve_duration_model(style_tracks: List[Track]) -> Dict[int, List[float]]:
+    """Prefer a model trained from style MIDIs; otherwise MidiGPT."""
+    learned = build_duration_model(style_tracks)
+    return learned if learned else builtin_duration_model()
+
+
+def resolve_jump_model(style_tracks: List[Track]) -> Dict[int, int]:
+    """Prefer a jump histogram from style MIDIs; otherwise MidiGPT."""
+    learned = build_jump_model(style_tracks)
+    return learned if learned else builtin_jump_model()
+
+
 def predict_jump_for_pitch_class(
     prev_key: int,
     target_pc: int,
@@ -376,7 +409,7 @@ def predict_jump_for_pitch_class(
     # Start from min_key and find first key with target PC
     first_candidate = min_key
     while first_candidate <= max_key:
-        if (first_candidate - 1) % 12 == target_pc:  # Piano key 1 = A (PC 9)
+        if (first_candidate - 1) % 12 == target_pc:  # Piano key 1 = A (PC 0 in this codebase)
             break
         first_candidate += 1
     
@@ -456,8 +489,7 @@ def predict_durations(
             if strategy == "mode":
                 try:
                     duration = mode(duration_samples)
-                except:
-                    # If no unique mode, use median
+                except StatisticsError:
                     duration = median(duration_samples)
             elif strategy == "median":
                 duration = median(duration_samples)
@@ -547,10 +579,9 @@ def generate_number_melody(
     # 2. Chunk digits
     values = chunk_digits(digits, chunk_mode, modulus)
     
-    # 3. Build jump model if using jump_predict mode
     jump_model = None
     if register_mode == "jump_predict":
-        jump_model = build_jump_model(style_tracks)
+        jump_model = resolve_jump_model(style_tracks)
     
     # 4. Map values to keys
     keys = map_values_to_keys(
@@ -566,11 +597,12 @@ def generate_number_melody(
         register_mode=register_mode
     )
     
-    # 5. Build duration model from style tracks
-    duration_model = build_duration_model(style_tracks)
-    
-    # 6. Predict durations
-    durations = predict_durations(keys, duration_model, strategy=duration_strategy)
+    duration_model = resolve_duration_model(style_tracks)
+    default_beats = piano_duration_beats(bpm, hold_seconds)
+    durations = predict_durations(
+        keys, duration_model, strategy=duration_strategy, default_duration=default_beats
+    )
+    durations = fit_durations_to_timbre(durations, bpm, hold_seconds)
     
     # 7. Create Note objects
     notes = []
@@ -605,8 +637,9 @@ def generate_number_melody(
         name=track_name,
         intensity=intensity,
         hold_seconds=hold_seconds,
-        delay=True,  # Delay adds nice space to melodies
-        notes=notes
+        delay=True,
+        notes=notes,
+        role="solo",
     )
 
 
@@ -705,8 +738,8 @@ def generate_pattern_bass_from_solo(
     min_key: int = 28,
     max_key: int = 42,
     duration_strategy: Literal["mode", "median", "random"] = "mode",
-    intensity: float = 2.0,
-    hold_seconds: float = 2.0,
+    intensity: float = 1.0,
+    hold_seconds: float = 0.8,
     loop_pattern: bool = True,
     track_name: Optional[str] = None
 ) -> Track:
@@ -727,8 +760,8 @@ def generate_pattern_bass_from_solo(
         min_key: Minimum bass key (default 28 = E1)
         max_key: Maximum bass key (default 42 = F#2)
         duration_strategy: How to pick duration from histogram (mode/median/random)
-        intensity: Track intensity parameter (default 2.0 for bass)
-        hold_seconds: Track hold parameter (default 2.0 for bass sustain)
+        intensity: Piano intensity (default 1.0)
+        hold_seconds: Piano sustain (default 0.8s); note beats also follow this timbre
         loop_pattern: If True, loop pattern to fill solo span; if False, stretch timing
         track_name: Custom track name (default auto-generated)
     
@@ -755,16 +788,9 @@ def generate_pattern_bass_from_solo(
         >>> len(track.notes) >= 5  # At least one pattern iteration
         True
     """
-    # 1. Parse pattern string (supports dash or comma separators)
-    pattern_string = pattern_string.replace(",", "-")
-    digits = []
-    for part in pattern_string.split("-"):
-        part = part.strip()
-        if part.isdigit():
-            digits.append(int(part))
-    
+    digits = parse_pattern_digits(pattern_string)
+
     if not digits:
-        # No valid digits found, return empty track
         return Track(
             name=track_name or "Pattern Bass from Solo (empty)",
             intensity=intensity,
@@ -786,11 +812,12 @@ def generate_pattern_bass_from_solo(
         key = max(min_key, min(max_key, key))
         keys.append(key)
     
-    # 4. Build duration model from style tracks
-    duration_model = build_duration_model(style_tracks)
-    
-    # 5. Predict durations for one pattern iteration
-    durations = predict_durations(keys, duration_model, strategy=duration_strategy)
+    duration_model = resolve_duration_model(style_tracks)
+    default_beats = piano_duration_beats(bpm, hold_seconds)
+    durations = predict_durations(
+        keys, duration_model, strategy=duration_strategy, default_duration=default_beats
+    )
+    durations = fit_durations_to_timbre(durations, bpm, hold_seconds)
     
     # 6. Determine solo span for timing
     if solo_track.notes:
@@ -861,8 +888,9 @@ def generate_pattern_bass_from_solo(
         name=track_name,
         intensity=intensity,
         hold_seconds=hold_seconds,
-        delay=False,  # Bass typically doesn't use delay
-        notes=notes
+        delay=True,
+        notes=notes,
+        role="base",
     )
 
 
@@ -925,16 +953,9 @@ def generate_pattern_bass(
         >>> len(track.notes)
         5
     """
-    # 1. Parse pattern string (supports dash or comma separators)
-    pattern_string = pattern_string.replace(",", "-")
-    digits = []
-    for part in pattern_string.split("-"):
-        part = part.strip()
-        if part.isdigit():
-            digits.append(int(part))
-    
+    digits = parse_pattern_digits(pattern_string)
+
     if not digits:
-        # No valid digits found, return empty track
         return Track(
             name=track_name or "Pattern Bass (empty)",
             intensity=intensity,
@@ -976,13 +997,11 @@ def generate_pattern_bass(
     else:
         raise ValueError(f"Unknown mode: {mode}. Use 'offset' or 'tonic_scale'.")
     
-    # 3. Build duration model from style tracks
-    duration_model = build_duration_model(style_tracks)
-    
-    # 4. Optionally use jump model for more sophisticated duration prediction
+    duration_model = resolve_duration_model(style_tracks)
+
     jump_model = None
     if use_jump_predict:
-        jump_model = build_jump_model(style_tracks)
+        jump_model = resolve_jump_model(style_tracks)
         
         # Refine keys using jump prediction within bass range
         # This allows the AI to pick octave jumps within [min_key, max_key]
@@ -1008,8 +1027,11 @@ def generate_pattern_bass(
         
         keys = refined_keys
     
-    # 5. Predict durations
-    durations = predict_durations(keys, duration_model, strategy=duration_strategy)
+    default_beats = piano_duration_beats(bpm, hold_seconds)
+    durations = predict_durations(
+        keys, duration_model, strategy=duration_strategy, default_duration=default_beats
+    )
+    durations = fit_durations_to_timbre(durations, bpm, hold_seconds)
     
     # 6. Create Note objects
     notes = []
@@ -1037,8 +1059,9 @@ def generate_pattern_bass(
         name=track_name,
         intensity=intensity,
         hold_seconds=hold_seconds,
-        delay=True,  # Use delay like melody for consistency
-        notes=notes
+        delay=True,
+        notes=notes,
+        role="base",
     )
 
 

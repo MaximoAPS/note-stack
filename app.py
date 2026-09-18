@@ -1,152 +1,161 @@
 """Note Stack V1 - Studio UI: Piano synthesis Streamlit app."""
 
-import streamlit as st
-import numpy as np
 import os
 from pathlib import Path
-import io
-import pandas as pd
+from typing import List, Optional, Tuple
+
 import altair as alt
-import tempfile
-from typing import List, Tuple, Dict
-from dataclasses import dataclass
-from collections import defaultdict
+import numpy as np
+import pandas as pd
+import streamlit as st
 
-from notes import Song, Track, Note
-from synth import synthesize_song, export_wav
-from midi_io import load_midi, export_midi
-from number_melody import (
-    generate_number_melody, 
-    generate_pattern_bass, 
-    generate_pattern_bass_from_solo,
-    SCALE_MODES
+from cluster_editor import (
+    NoteCluster,
+    clusters_to_notes,
+    format_duration_label,
+    notes_to_clusters,
+    parse_cluster_string,
 )
-from pattern_generators import PATTERN_GENERATORS
+from midi_io import load_midi, song_to_midi_bytes
+from i18n import LANGS, t
+from notes import Note, Song, Track, song_span_beats
+from number_melody import (
+    SCALE_MODES,
+    generate_number_melody,
+    generate_pattern_bass,
+    generate_pattern_bass_from_solo,
+)
+from pattern_generators import run_pattern_generator
+from synth import song_to_wav_bytes
 
 
-# ========== CLUSTER BADGE HELPERS ==========
-
-@dataclass
-class NoteCluster:
-    """A cluster of simultaneous notes with a duration."""
-    start_beat: float
-    duration_beats: float
-    keys: List[int]
-    velocity: int = 100
-
-
-def notes_to_clusters(notes: List[Note]) -> List[NoteCluster]:
-    """Group notes by start_beat into clusters."""
-    if not notes:
-        return []
-    
-    # Group by start_beat
-    groups = defaultdict(list)
-    for note in notes:
-        groups[note.start_beat].append(note)
-    
-    # Create clusters
-    clusters = []
-    for start_beat in sorted(groups.keys()):
-        group_notes = groups[start_beat]
-        # Use the most common duration in the cluster
-        durations = [n.duration_beats for n in group_notes]
-        duration = max(set(durations), key=durations.count)
-        # Collect all keys
-        keys = [n.key for n in group_notes]
-        # Use first velocity
-        velocity = group_notes[0].velocity
-        clusters.append(NoteCluster(start_beat, duration, keys, velocity))
-    
-    return clusters
-
-
-def clusters_to_notes(clusters: List[NoteCluster]) -> List[Note]:
-    """Convert clusters back to individual notes."""
+def _notes_from_tempo_keys(tempo_list: List[float], keys: List[int], bpm: float) -> List[Note]:
+    """Convert a Desmos-style (seconds, key) list into Note objects."""
     notes = []
-    for cluster in clusters:
-        for key in cluster.keys:
-            notes.append(Note(
-                key=key,
-                start_beat=cluster.start_beat,
-                duration_beats=cluster.duration_beats,
-                velocity=max(1, cluster.velocity)  # Ensure velocity ≥ 1
-            ))
+    for i, key in enumerate(keys):
+        start_sec = tempo_list[i]
+        duration_sec = tempo_list[i + 1] - start_sec
+        notes.append(Note(
+            key=key,
+            start_beat=start_sec * bpm / 60,
+            duration_beats=duration_sec * bpm / 60,
+        ))
     return notes
 
 
-def parse_cluster_string(cluster_str: str, default_duration: float = 0.5) -> Tuple[List[NoteCluster], List[str]]:
-    """Parse cluster string like '35-35,36-38-35' into clusters.
-    
-    Syntax:
-    - Dash (-) separates clusters
-    - Comma (,) separates keys within a cluster
-    - Each cluster gets default_duration beats
-    
-    Example: '35-35,36-38-35' creates:
-    1. [35] at beat 0.0
-    2. [35,36] at beat 0.5
-    3. [38] at beat 1.0
-    4. [35] at beat 1.5
-    
-    Returns:
-        (clusters, warnings) - list of clusters and list of warning messages
+def list_demo_stems() -> List[str]:
+    demos_dir = Path("demos")
+    if not demos_dir.exists():
+        return []
+    return sorted(f.stem for f in demos_dir.glob("*.mid"))
+
+
+def load_style_tracks_from_pack(style_pack: List[dict]) -> Tuple[List[Track], List[str]]:
+    """Load tracks from style-pack entries. Returns (tracks, warning messages)."""
+    tracks: List[Track] = []
+    warnings: List[str] = []
+    for entry in style_pack:
+        try:
+            tracks.extend(load_midi(entry["path"]).tracks)
+        except (OSError, ValueError, EOFError) as exc:
+            warnings.append(f"Could not load {entry['name']}: {exc}")
+    return tracks, warnings
+
+
+def resolve_style_tracks(
+    use_global: bool,
+    selected_demos: Optional[List[str]] = None,
+) -> Tuple[List[Track], List[str], str]:
+    """Prefer trained models, then the global pack, then a local demo selection.
+
+    Returns (tracks, warnings, source_label).
     """
-    clusters = []
+    if st.session_state.trained_style_tracks:
+        return st.session_state.trained_style_tracks, [], "trained"
+
+    if use_global:
+        tracks, warnings = load_style_tracks_from_pack(st.session_state.style_pack)
+        return tracks, warnings, "pack" if tracks else "empty"
+
+    tracks = []
     warnings = []
-    current_beat = 0.0
-    
-    parts = cluster_str.strip().split('-')
-    for part in parts:
-        if not part.strip():
-            continue
-        
-        # Parse keys in this cluster (comma-separated)
-        key_strs = part.split(',')
-        keys = []
-        for k in key_strs:
-            try:
-                key_val = int(k.strip())
-                keys.append(key_val)
-                
-                # Warn about very low or very high keys
-                if key_val < 20:
-                    warnings.append(f"⚠️ Key {key_val} is very low (near bottom of piano, barely audible)")
-                elif key_val > 80:
-                    warnings.append(f"⚠️ Key {key_val} is very high (top of piano)")
-            except ValueError:
-                continue
-        
-        if keys:
-            # Ensure velocity is at least 1
-            clusters.append(NoteCluster(
-                start_beat=current_beat,
-                duration_beats=default_duration,
-                keys=keys,
-                velocity=100
-            ))
-            current_beat += default_duration
-    
-    return clusters, warnings
+    for demo_name in selected_demos or []:
+        demo_path = Path("demos") / f"{demo_name}.mid"
+        try:
+            tracks.extend(load_midi(str(demo_path)).tracks)
+        except (OSError, ValueError, EOFError) as exc:
+            warnings.append(f"Could not load {demo_name}: {exc}")
+    return tracks, warnings, "override"
 
 
-def format_duration_label(duration: float) -> str:
-    """Format duration as fraction like '1/4', '1/2', '1', '2'."""
-    if duration >= 1.0:
-        if duration == int(duration):
-            return str(int(duration))
-        else:
-            return f"{duration:.2f}"
+def consume_uploaded_file(uploaded_file) -> Optional[str]:
+    """Return a stable id the first time this upload is seen, else None."""
+    if uploaded_file is None:
+        return None
+    file_id = f"{uploaded_file.name}:{uploaded_file.size}"
+    seen_key = f"_seen_upload_{uploaded_file.name}"
+    if st.session_state.get(seen_key) == file_id:
+        return None
+    st.session_state[seen_key] = file_id
+    return file_id
+
+
+def cluster_cache_key(track: Track) -> str:
+    return f"clusters_{track.id}"
+
+
+def pending_rest_key(track: Track) -> str:
+    return f"pending_rest_{track.id}"
+
+
+def invalidate_cluster_cache(track: Track) -> None:
+    key = cluster_cache_key(track)
+    if key in st.session_state:
+        del st.session_state[key]
+
+
+def apply_ai_fill(track: Track, generator_id: str, role_name: str, key_lo: int, key_hi: int) -> None:
+    """Fill the current track from other tracks using a registered generator."""
+    donors = [t for t in st.session_state.song.tracks if t.id != track.id]
+    if not donors:
+        st.warning("⚠️ Need other tracks as source")
+        return
+    try:
+        generated = run_pattern_generator(
+            generator_id,
+            donors,
+            bpm=st.session_state.song.bpm,
+            key_lo=key_lo,
+            key_hi=key_hi,
+            num_beats=song_span_beats(st.session_state.song) or 16.0,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        st.error(f"Error: {exc}")
+        return
+    role = "base" if "Base" in role_name else "adorn" if "Adorn" in role_name else "other"
+    generated.role = role
+    if track.notes:
+        generated.name = role_name
+        st.session_state.song.tracks.append(generated)
+        st.success(f"✓ Added new track '{role_name}' with {len(generated.notes)} notes")
     else:
-        # Try common fractions
-        if abs(duration - 0.25) < 0.01:
-            return "1/4"
-        elif abs(duration - 0.5) < 0.01:
-            return "1/2"
-        elif abs(duration - 0.75) < 0.01:
-            return "3/4"
-        else:
-            return f"{duration:.2f}"
+        track.notes = generated.notes
+        track.name = role_name
+        track.role = role
+        track.intensity = generated.intensity
+        track.hold_seconds = generated.hold_seconds
+        track.delay = generated.delay
+        invalidate_cluster_cache(track)
+        st.success(f"✓ Filled '{role_name}' with {len(generated.notes)} notes")
+    st.rerun()
+
+
+def write_temp_midi(uploaded_file) -> str:
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mid") as tmp_file:
+        tmp_file.write(uploaded_file.getvalue())
+        return tmp_file.name
 
 
 def create_piano_song_preset() -> Song:
@@ -157,60 +166,26 @@ def create_piano_song_preset() -> Song:
     tempo_list_1 = [i * 0.5 for i in range(0, 30)] + [15, 16]
     notes_1 = [57,54,49,54,57,54,49,54,57,52,49,52,57,52,49,52,
                57,53,49,53,57,53,49,53,57,53,49,53,57,62]
-    
-    track1_notes = []
-    for i, key in enumerate(notes_1):
-        start_sec = tempo_list_1[i]
-        end_sec = tempo_list_1[i + 1]
-        duration_sec = end_sec - start_sec
-        
-        # Convert to beats: beats = seconds * bpm / 60
-        start_beat = start_sec * bpm / 60
-        duration_beats = duration_sec * bpm / 60
-        
-        track1_notes.append(Note(key=key, start_beat=start_beat, 
-                                duration_beats=duration_beats))
-    
-    track1 = Track(name="Melody", intensity=1.0, delay=True, 
-                   hold_seconds=0.8, notes=track1_notes)
-    
+    track1 = Track(
+        name="Melody", intensity=1.0, delay=True, hold_seconds=0.8,
+        notes=_notes_from_tempo_keys(tempo_list_1, notes_1, bpm),
+    )
+
     # Track 2: Bass low (I=2, delay=off, d=2)
     tempo_list_2 = [0, 4, 8, 12, 14, 16]
     notes_2 = [18, 21, 25, 25, 25]
-    
-    track2_notes = []
-    for i, key in enumerate(notes_2):
-        start_sec = tempo_list_2[i]
-        end_sec = tempo_list_2[i + 1]
-        duration_sec = end_sec - start_sec
-        
-        start_beat = start_sec * bpm / 60
-        duration_beats = duration_sec * bpm / 60
-        
-        track2_notes.append(Note(key=key, start_beat=start_beat, 
-                                duration_beats=duration_beats))
-    
-    track2 = Track(name="Bass Low", intensity=2.0, delay=False, 
-                   hold_seconds=2.0, notes=track2_notes)
-    
+    track2 = Track(
+        name="Bass Low", intensity=2.0, delay=False, hold_seconds=2.0,
+        notes=_notes_from_tempo_keys(tempo_list_2, notes_2, bpm),
+    )
+
     # Track 3: Bass high (I=2, delay=off, d=2)
     notes_3 = [30, 33, 37, 37, 37]
-    
-    track3_notes = []
-    for i, key in enumerate(notes_3):
-        start_sec = tempo_list_2[i]
-        end_sec = tempo_list_2[i + 1]
-        duration_sec = end_sec - start_sec
-        
-        start_beat = start_sec * bpm / 60
-        duration_beats = duration_sec * bpm / 60
-        
-        track3_notes.append(Note(key=key, start_beat=start_beat, 
-                                duration_beats=duration_beats))
-    
-    track3 = Track(name="Bass High", intensity=2.0, delay=False, 
-                   hold_seconds=2.0, notes=track3_notes)
-    
+    track3 = Track(
+        name="Bass High", intensity=2.0, delay=False, hold_seconds=2.0,
+        notes=_notes_from_tempo_keys(tempo_list_2, notes_3, bpm),
+    )
+
     # Track 4: Arpeggio (I=2, delay=on, d=0.5)
     tempo_list_3 = [16 + i * 0.5 for i in range(65)]
     notes_4 = [18,25,30,25,33,30,25,30,18,25,33,25,33,30,25,30,
@@ -218,21 +193,10 @@ def create_piano_song_preset() -> Song:
                26,33,38,33,42,38,33,38,26,33,38,33,42,38,33,38,
                28,35,40,35,44,40,35,28,28,32,37,32,41,37,32,25,
                18,25,30]
-    
-    track4_notes = []
-    for i, key in enumerate(notes_4):
-        start_sec = tempo_list_3[i]
-        end_sec = tempo_list_3[i + 1]
-        duration_sec = end_sec - start_sec
-        
-        start_beat = start_sec * bpm / 60
-        duration_beats = duration_sec * bpm / 60
-        
-        track4_notes.append(Note(key=key, start_beat=start_beat, 
-                                duration_beats=duration_beats))
-    
-    track4 = Track(name="Arpeggio", intensity=2.0, delay=True, 
-                   hold_seconds=0.5, notes=track4_notes)
+    track4 = Track(
+        name="Arpeggio", intensity=2.0, delay=True, hold_seconds=0.5,
+        notes=_notes_from_tempo_keys(tempo_list_3, notes_4, bpm),
+    )
     
     return Song(bpm=bpm, tracks=[track1, track2, track3, track4])
 
@@ -328,9 +292,24 @@ def render_all_tracks_combined_chart(song: Song, include_muted: bool = False):
 
 def main():
     st.set_page_config(page_title="Note Stack Studio", layout="wide")
-    
+
+    if "lang" not in st.session_state:
+        st.session_state.lang = "en"
+
+    lang_col, _ = st.columns([1, 5])
+    with lang_col:
+        st.session_state.lang = st.selectbox(
+            t("lang_label", st.session_state.lang),
+            options=list(LANGS),
+            format_func=lambda code: "English" if code == "en" else "Español",
+            index=0 if st.session_state.lang == "en" else 1,
+            key="lang_select",
+        )
+    lang = st.session_state.lang
+
     st.title("🎹 Note Stack Studio")
-    st.caption("Number Melody generator • AI track tools • Piano key synthesis from Desmos")
+    st.caption(t("caption", lang))
+    st.caption(t("key_legend", lang))
     
     # Initialize session state
     if 'song' not in st.session_state:
@@ -350,16 +329,15 @@ def main():
         st.session_state.training_timestamp = None
     
     # ========== STYLE / TRAINING MIDI LIBRARY (GLOBAL) ==========
-    st.subheader("🎼 Style / Training MIDI Library — Load & train optional AI models")
-    st.caption("**Upload MIDIs freely → Train once** • Number Melody & Pattern generators use trained models if available, else fallback to MIDI-GPT / heuristics")
-    st.caption("**Carga MIDIs libremente → Entrena una vez** • Si no entrenas, los generadores usan heurísticas / MIDI-GPT")
+    st.subheader(f"🎼 {t('style_title', lang)}")
+    st.caption(t("style_caption", lang))
     
     col1, col2 = st.columns([2, 1])
     
     with col1:
         # Multi-file uploader
         uploaded_files = st.file_uploader(
-            "Upload Style MIDIs / Subir MIDIs de estilo",
+            t("style_upload", lang),
             type=["mid", "midi"],
             accept_multiple_files=True,
             key="style_upload_multi",
@@ -368,19 +346,18 @@ def main():
         
         col_a, col_b = st.columns(2)
         with col_a:
-            if st.button("➕ Add uploads to pack / Agregar archivos al pack", width='stretch', key="add_uploads"):
+            if st.button(f"➕ {t('add_uploads', lang)}", width='stretch', key="add_uploads"):
                 if uploaded_files:
                     added_count = 0
                     for uploaded_file in uploaded_files:
                         # Check if already in pack (deduplicate by name)
                         existing_names = [entry['name'] for entry in st.session_state.style_pack]
                         if uploaded_file.name not in existing_names:
-                            # Save to temp file
-                            with tempfile.NamedTemporaryFile(delete=False, suffix=".mid") as tmp_file:
-                                tmp_file.write(uploaded_file.read())
-                                tmp_path = tmp_file.name
-                            
-                            entry = {'name': uploaded_file.name, 'path': tmp_path, 'source': 'upload'}
+                            entry = {
+                                'name': uploaded_file.name,
+                                'path': write_temp_midi(uploaded_file),
+                                'source': 'upload',
+                            }
                             st.session_state.style_pack.append(entry)
                             added_count += 1
                     
@@ -393,13 +370,11 @@ def main():
                     st.warning("No files selected")
         
         # Demo selector
+        demo_files = list_demo_stems()
         demos_dir = Path("demos")
-        demo_files = []
-        if demos_dir.exists():
-            demo_files = sorted([f.stem for f in demos_dir.glob("*.mid")])
         
         selected_demos = st.multiselect(
-            "Classical Demos / Demos clásicos",
+            t("demos", lang),
             demo_files,
             default=[],
             help="Select classical demos to add | Selecciona demos clásicos para agregar",
@@ -408,7 +383,7 @@ def main():
         
         col_a, col_b = st.columns(2)
         with col_a:
-            if st.button("➕ Add selected demos / Agregar demos seleccionados", width='stretch', key="add_demos"):
+            if st.button(f"➕ {t('add_demos', lang)}", width='stretch', key="add_demos"):
                 if selected_demos:
                     added_count = 0
                     for demo_name in selected_demos:
@@ -428,7 +403,7 @@ def main():
                     st.warning("No demos selected")
         
         with col_b:
-            if st.button("⭐ Add all classical demos / Agregar todos los demos", width='stretch', key="add_all_demos"):
+            if st.button(f"⭐ {t('add_all_demos', lang)}", width='stretch', key="add_all_demos"):
                 if demo_files:
                     added_count = 0
                     for demo_name in demo_files:
@@ -453,28 +428,24 @@ def main():
         
         if st.session_state.training_timestamp:
             trained_count = len(st.session_state.trained_style_tracks)
-            st.success(f"✓ Trained on {trained_count} track(s)")
+            st.success(f"✓ {t('trained', lang, n=trained_count)}")
             st.caption(f"Models: duration + jump")
         else:
-            st.info("⚪ Not trained")
-            st.caption("Generators will use fallbacks")
+            st.info(f"⚪ {t('not_trained', lang)}")
         
-        if st.button("🧠 Train models from style pack", 
+        if st.button(f"🧠 {t('train', lang)}", 
                     type="primary", 
                     width='stretch',
                     disabled=len(st.session_state.style_pack) == 0,
                     key="train_models"):
             if st.session_state.style_pack:
                 with st.spinner("Training duration & jump models..."):
-                    # Load all MIDIs in pack
-                    style_tracks = []
-                    for entry in st.session_state.style_pack:
-                        try:
-                            song = load_midi(entry['path'])
-                            style_tracks.extend(song.tracks)
-                        except Exception as e:
-                            st.warning(f"⚠️ Could not load {entry['name']}: {str(e)}")
-                    
+                    style_tracks, load_warnings = load_style_tracks_from_pack(
+                        st.session_state.style_pack
+                    )
+                    for warning in load_warnings:
+                        st.warning(f"⚠️ {warning}")
+
                     if style_tracks:
                         # Build models
                         from number_melody import build_duration_model, build_jump_model
@@ -491,13 +462,13 @@ def main():
             else:
                 st.warning("Style pack is empty")
         
-        if st.button("🗑️ Clear pack", width='stretch', key="clear_pack"):
+        if st.button(f"🗑️ {t('clear_pack', lang)}", width='stretch', key="clear_pack"):
             # Clean up temp files
             for entry in st.session_state.style_pack:
                 if entry['source'] == 'upload' and os.path.exists(entry['path']):
                     try:
                         os.unlink(entry['path'])
-                    except:
+                    except OSError:
                         pass
             
             st.session_state.style_pack = []
@@ -519,16 +490,15 @@ def main():
     st.divider()
     
     # ========== NUMBER SEQUENCE INPUT & SOLO GENERATION (PROMINENT) ==========
-    st.subheader("🔢 Number Sequence → Solo / Melody")
-    st.caption("Paste digit sequences (Pi, Fibonacci, dates) • Generate Solo melody • Or upload a solo MIDI • "
-              "Uses style pack above for duration/jump learning")
+    st.subheader(f"🔢 {t('melody_title', lang)}")
+    st.caption(t("melody_caption", lang))
     
     # Main digit input and quick controls
     col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
     
     with col1:
         digit_string = st.text_area(
-            "Digit String",
+            t("digits", lang),
             value="314159265358979323846",
             height=60,
             help="Enter any digit sequence (Pi, Fibonacci, dates, etc.)",
@@ -556,7 +526,7 @@ def main():
             min_value=1,
             max_value=88,
             value=40,
-            help="Root key (40 = E, 48 = C)",
+            help="Root key (40 = C4 middle C, 49 = A4)",
             key="melody_tonic"
         )
         
@@ -580,23 +550,23 @@ def main():
         
         # Upload solo MIDI
         uploaded_solo = st.file_uploader("Or upload Solo MIDI", type=["mid", "midi"], key="solo_upload")
-        if uploaded_solo is not None:
+        if consume_uploaded_file(uploaded_solo):
             try:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".mid") as tmp_file:
-                    tmp_file.write(uploaded_solo.read())
-                    tmp_path = tmp_file.name
-                
-                solo_song = load_midi(tmp_path)
-                os.unlink(tmp_path)
-                
-                # Mark first track as Solo
+                tmp_path = write_temp_midi(uploaded_solo)
+                try:
+                    solo_song = load_midi(tmp_path)
+                finally:
+                    if os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
+
                 if solo_song.tracks:
                     solo_song.tracks[0].name = f"🎵 Solo: {uploaded_solo.name}"
+                    solo_song.tracks[0].role = "solo"
                     st.session_state.song.tracks.append(solo_song.tracks[0])
                     st.success(f"✓ Loaded Solo: {uploaded_solo.name}")
                     st.rerun()
-            except Exception as e:
-                st.error(f"Error: {str(e)}")
+            except (OSError, ValueError, EOFError) as e:
+                st.error(f"Error: {e}")
     
     # Advanced options in expander
     with st.expander("⚙️ Advanced Options (chunking, register, key range, style override)", expanded=False):
@@ -640,7 +610,7 @@ def main():
                 min_value=1,
                 max_value=88,
                 value=28,
-                help="Lowest note allowed (28 = E1)",
+                help="Lowest note allowed (28 = C3)",
                 key="melody_min_key"
             )
         
@@ -650,7 +620,7 @@ def main():
                 min_value=1,
                 max_value=88,
                 value=64,
-                help="Highest note allowed (64 = E4)",
+                help="Highest note allowed (64 = C6)",
                 key="melody_max_key"
             )
         
@@ -676,10 +646,7 @@ def main():
             )
             
             if not use_global_styles:
-                demos_dir = Path("demos")
-                demo_files = []
-                if demos_dir.exists():
-                    demo_files = sorted([f.stem for f in demos_dir.glob("*.mid")])
+                demo_files = list_demo_stems()
                 
                 selected_demos = st.multiselect(
                     "Style MIDIs (override)",
@@ -700,40 +667,22 @@ def main():
                 key="melody_duration_strategy"
             )
     
-    if st.button("🎵 Generate Solo Melody from Numbers", type="primary", width='stretch'):
+    if st.button(f"🎵 {t('generate_solo', lang)}", type="primary", width='stretch'):
         try:
             # Generate melody
             with st.spinner("Generating melody... / Generando melodía..."):
-                # Use trained models if available, else determine which style sources to use
-                if st.session_state.trained_style_tracks:
-                    # Use pre-trained models
-                    style_tracks = st.session_state.trained_style_tracks
-                else:
-                    # No trained models, load from pack or selection
-                    style_tracks = []
-                    
-                    if use_global_styles:
-                        if st.session_state.style_pack:
-                            # Load from global style pack
-                            for entry in st.session_state.style_pack:
-                                try:
-                                    style_song = load_midi(entry['path'])
-                                    style_tracks.extend(style_song.tracks)
-                                except Exception as e:
-                                    st.warning(f"Could not load {entry['name']}: {str(e)}")
-                        
-                        if not style_tracks:
-                            st.info("ℹ️ No trained models or style MIDIs. Using heuristic durations. Train models in Style MIDI Library for AI patterns.")
-                    else:
-                        if not selected_demos:
-                            st.error("⚠️ Select at least one style MIDI / Selecciona al menos un MIDI de estilo")
-                            raise ValueError("No style MIDIs selected")
-                        else:
-                            # Load style tracks from local selection
-                            for demo_name in selected_demos:
-                                demo_path = demos_dir / f"{demo_name}.mid"
-                                demo_song = load_midi(str(demo_path))
-                                style_tracks.extend(demo_song.tracks)
+                override_demos = selected_demos if not use_global_styles else None
+                if not use_global_styles and not override_demos:
+                    st.error("⚠️ Select at least one style MIDI / Selecciona al menos un MIDI de estilo")
+                    raise ValueError("No style MIDIs selected")
+
+                style_tracks, style_warnings, style_source = resolve_style_tracks(
+                    use_global_styles, override_demos
+                )
+                for warning in style_warnings:
+                    st.warning(warning)
+                if style_source == "empty":
+                    st.info("ℹ️ No trained models or style MIDIs. Using heuristic durations. Train models in Style MIDI Library for AI patterns.")
                 
                 melody_track = generate_number_melody(
                     digit_string=digit_string,
@@ -776,12 +725,8 @@ def main():
     st.divider()
     
     # ========== PATTERN → BASE PANEL ==========
-    st.subheader("🎸 Pattern → Base — Ordered bass from digit pattern")
-    st.caption("Enter a pattern sequence (e.g., Pi digits `3-1-4-1-5`) to generate a bass line "
-              "with those pitches in order • AI assigns durations from style MIDIs • "
-              "Digits are degrees/offsets, not literal piano keys 1-5")
-    st.caption("Los dígitos son grados de patrón, no teclas crudas 1-5 • "
-              "Ejemplo Pi `31415` → bajo con esos tonos relativos en orden")
+    st.subheader(f"🎸 {t('pattern_title', lang)}")
+    st.caption(t("pattern_caption", lang))
     
     col1, col2 = st.columns([2, 1])
     
@@ -821,7 +766,7 @@ def main():
                 min_value=1,
                 max_value=40,
                 value=16,
-                help="Root key in bass register (16 = E0, 28 = E1)",
+                help="Root key in bass register (16 = C2, 28 = C3)",
                 key="pattern_bass_tonic"
             )
             bass_scale_mode = st.selectbox(
@@ -838,7 +783,7 @@ def main():
             min_value=1,
             max_value=88,
             value=28,
-            help="Lowest bass note allowed (28 = E1)",
+            help="Lowest bass note allowed (28 = C3)",
             key="pattern_bass_min_key"
         )
     
@@ -848,7 +793,7 @@ def main():
             min_value=1,
             max_value=88,
             value=42,
-            help="Highest bass note allowed (42 = F#2)",
+            help="Highest bass note allowed (42 = D4)",
             key="pattern_bass_max_key"
         )
     
@@ -864,10 +809,7 @@ def main():
         )
         
         if not use_global_bass_styles:
-            demos_dir = Path("demos")
-            demo_files = []
-            if demos_dir.exists():
-                demo_files = sorted([f.stem for f in demos_dir.glob("*.mid")])
+            demo_files = list_demo_stems()
             
             selected_bass_styles = st.multiselect(
                 "Style MIDIs / MIDIs de estilo",
@@ -905,40 +847,22 @@ def main():
             key="pattern_bass_bpm"
         )
     
-    if st.button("🎸 Generate Pattern Bass / Generar Bajo de Patrón", type="primary", width='stretch'):
+    if st.button(f"🎸 {t('generate_bass', lang)}", type="primary", width='stretch'):
         try:
             # Generate pattern bass
             with st.spinner("Generating pattern bass... / Generando bajo de patrón..."):
-                # Use trained models if available, else determine which style sources to use
-                if st.session_state.trained_style_tracks:
-                    # Use pre-trained models
-                    style_tracks = st.session_state.trained_style_tracks
-                else:
-                    # No trained models, load from pack or selection
-                    style_tracks = []
-                    
-                    if use_global_bass_styles:
-                        if st.session_state.style_pack:
-                            # Load from global style pack
-                            for entry in st.session_state.style_pack:
-                                try:
-                                    style_song = load_midi(entry['path'])
-                                    style_tracks.extend(style_song.tracks)
-                                except Exception as e:
-                                    st.warning(f"Could not load {entry['name']}: {str(e)}")
-                        
-                        if not style_tracks:
-                            st.info("ℹ️ No trained models or style MIDIs. Using heuristic durations. Train models in Style MIDI Library for AI patterns.")
-                    else:
-                        if not selected_bass_styles:
-                            st.error("⚠️ Select at least one style MIDI / Selecciona al menos un MIDI de estilo")
-                            raise ValueError("No style MIDIs selected")
-                        else:
-                            # Load style tracks from local selection
-                            for demo_name in selected_bass_styles:
-                                demo_path = demos_dir / f"{demo_name}.mid"
-                                demo_song = load_midi(str(demo_path))
-                                style_tracks.extend(demo_song.tracks)
+                override_demos = selected_bass_styles if not use_global_bass_styles else None
+                if not use_global_bass_styles and not override_demos:
+                    st.error("⚠️ Select at least one style MIDI / Selecciona al menos un MIDI de estilo")
+                    raise ValueError("No style MIDIs selected")
+
+                style_tracks, style_warnings, style_source = resolve_style_tracks(
+                    use_global_bass_styles, override_demos
+                )
+                for warning in style_warnings:
+                    st.warning(warning)
+                if style_source == "empty":
+                    st.info("ℹ️ No trained models or style MIDIs. Using heuristic durations. Train models in Style MIDI Library for AI patterns.")
                 
                 if pattern_mode == "offset":
                     bass_track = generate_pattern_bass(
@@ -992,7 +916,7 @@ def main():
     st.divider()
     
     # ========== FILL BASE FROM SOLO ==========
-    with st.expander("🎸🎵 Fill Base from Solo — Ordered pattern harmonized under Solo", expanded=False):
+    with st.expander(f"🎸🎵 {t('fill_solo_title', lang)}", expanded=False):
         st.caption("Given an existing Solo track, pick notes in a fixed order (pattern) and fill a Base track with those pitches "
                   "harmonized under the Solo • AI can auto-choose offset to fit with Solo pitch classes • "
                   "Timing stretches/loops to match Solo span")
@@ -1000,7 +924,10 @@ def main():
                   "IA puede elegir offset automático para armonizar")
         
         # Check if we have a Solo track
-        solo_tracks = [t for t in st.session_state.song.tracks if "Solo" in t.name or "solo" in t.name.lower()]
+        solo_tracks = [
+            t for t in st.session_state.song.tracks
+            if t.role == "solo" or "solo" in t.name.lower()
+        ]
         
         if not solo_tracks:
             st.warning("⚠️ No Solo track found. Generate a Number Melody first (it will be marked as Solo).")
@@ -1049,7 +976,7 @@ def main():
                     min_value=1,
                     max_value=88,
                     value=28,
-                    help="Lowest bass note allowed (28 = E1)",
+                    help="Lowest bass note allowed (28 = C3)",
                     key="solo_min_key"
                 )
             
@@ -1059,26 +986,31 @@ def main():
                     min_value=1,
                     max_value=88,
                     value=42,
-                    help="Highest bass note allowed (42 = F#2)",
+                    help="Highest bass note allowed (42 = D4)",
                     key="solo_max_key"
                 )
             
             col1, col2, col3 = st.columns(3)
             
             with col1:
-                # Style sources for duration learning
-                demos_dir = Path("demos")
-                demo_files = []
-                if demos_dir.exists():
-                    demo_files = sorted([f.stem for f in demos_dir.glob("*.mid")])
-                
-                selected_solo_bass_styles = st.multiselect(
-                    "Style MIDIs / MIDIs de estilo",
-                    demo_files,
-                    default=demo_files[:2] if len(demo_files) >= 2 else demo_files,
-                    help="Select MIDIs to learn durations | Selecciona MIDIs para aprender duraciones",
-                    key="solo_bass_styles"
+                use_global_solo_styles = st.checkbox(
+                    "Use global style pack",
+                    value=True,
+                    help="Use the Style Library MIDIs loaded above. Uncheck to select specific MIDIs.",
+                    key="solo_use_global"
                 )
+                selected_solo_bass_styles = []
+                if not use_global_solo_styles:
+                    demo_files = list_demo_stems()
+                    selected_solo_bass_styles = st.multiselect(
+                        "Style MIDIs / MIDIs de estilo",
+                        demo_files,
+                        default=demo_files[:2] if len(demo_files) >= 2 else demo_files,
+                        help="Select MIDIs to learn durations | Selecciona MIDIs para aprender duraciones",
+                        key="solo_bass_styles"
+                    )
+                else:
+                    st.caption(f"✓ Using {len(st.session_state.style_pack)} global style MIDI(s)")
             
             with col2:
                 solo_duration_strategy = st.radio(
@@ -1099,22 +1031,17 @@ def main():
             
             if st.button("🎸 Fill Base from Solo / Llenar Bajo desde Solo", 
                         type="primary", 
-                        use_container_width=True,
+                        width='stretch',
                         key="fill_base_from_solo_btn"):
                 try:
-                    # Use trained models if available, else load from selection
-                    if st.session_state.trained_style_tracks:
-                        style_tracks = st.session_state.trained_style_tracks
-                    elif selected_solo_bass_styles:
-                        # Load style tracks from selection
-                        style_tracks = []
-                        for demo_name in selected_solo_bass_styles:
-                            demo_path = demos_dir / f"{demo_name}.mid"
-                            demo_song = load_midi(str(demo_path))
-                            style_tracks.extend(demo_song.tracks)
-                    else:
+                    style_tracks, style_warnings, style_source = resolve_style_tracks(
+                        use_global_solo_styles,
+                        selected_solo_bass_styles if not use_global_solo_styles else None,
+                    )
+                    for warning in style_warnings:
+                        st.warning(warning)
+                    if style_source == "empty":
                         st.info("💡 No trained models or style MIDIs selected. Using fallback durations (0.5 beats).")
-                        style_tracks = []
                     
                     # Use first solo track found
                     primary_solo = solo_tracks[0]
@@ -1170,73 +1097,58 @@ def main():
     st.divider()
     
     # ========== TRACKS STUDIO ==========
-    st.subheader("🎛️ Tracks Studio")
-    st.caption("Add tracks • Assign roles (Solo/Base/Adorn) • Generate AI fills • Edit notes • Set FX")
+    st.subheader(f"🎛️ {t('studio_title', lang)}")
+    st.caption(t("studio_caption", lang))
     
     # Play controls and BPM
     col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 1, 2])
     
     with col1:
-        if st.button("▶ Play", type="primary", width='stretch'):
+        if st.button(f"▶ {t('play', lang)}", type="primary", width='stretch'):
             with st.spinner("Synthesizing..."):
-                # Filter unmuted tracks
                 active_tracks = [t for t in st.session_state.song.tracks if not t.mute]
                 if not active_tracks:
                     st.warning("⚠️ All tracks muted. Unmute at least one track to play.")
                 else:
-                    audio_data, sample_rate = synthesize_song(st.session_state.song)
-                    
-                    # Convert to bytes for st.audio (stereo)
-                    audio_bytes = io.BytesIO()
-                    import wave
-                    with wave.open(audio_bytes, 'wb') as wav_file:
-                        wav_file.setnchannels(2)  # Stereo
-                        wav_file.setsampwidth(2)
-                        wav_file.setframerate(sample_rate)
-                        wav_file.writeframes(audio_data.tobytes())
-                    
-                    audio_bytes.seek(0)
-                    # Store in session state so it persists across reruns
-                    st.session_state.last_audio = audio_bytes.read()
-                    audio_bytes.seek(0)
+                    st.session_state.last_audio = song_to_wav_bytes(st.session_state.song)
         
-        # Display last played audio if available
         if 'last_audio' in st.session_state:
             st.audio(st.session_state.last_audio, format='audio/wav')
     
     with col2:
-        if st.button("Download WAV", width='stretch'):
+        if st.button(t("prepare_wav", lang), width='stretch'):
             with st.spinner("Exporting WAV..."):
-                wav_path = "/tmp/note_stack_export.wav"
-                export_wav(wav_path, st.session_state.song)
-                
-                with open(wav_path, 'rb') as f:
-                    st.download_button(
-                        label="💾 Save WAV",
-                        data=f.read(),
-                        file_name="note_stack.wav",
-                        mime="audio/wav",
-                        width='stretch'
-                    )
+                st.session_state.export_wav_bytes = song_to_wav_bytes(st.session_state.song)
+        if st.session_state.get("export_wav_bytes"):
+            st.download_button(
+                label="💾 Save WAV",
+                data=st.session_state.export_wav_bytes,
+                file_name="note_stack.wav",
+                mime="audio/wav",
+                width='stretch',
+                key="save_wav_btn",
+            )
     
     with col3:
-        if st.button("Download MIDI", width='stretch'):
+        if st.button(t("prepare_midi", lang), width='stretch'):
             with st.spinner("Exporting MIDI..."):
-                midi_path = "/tmp/note_stack_export.mid"
-                export_midi(midi_path, st.session_state.song)
-                
-                with open(midi_path, 'rb') as f:
-                    st.download_button(
-                        label="💾 Save MIDI",
-                        data=f.read(),
-                        file_name="note_stack.mid",
-                        mime="audio/midi",
-                        width='stretch'
-                    )
+                st.session_state.export_midi_bytes = song_to_midi_bytes(st.session_state.song)
+        if st.session_state.get("export_midi_bytes"):
+            st.download_button(
+                label="💾 Save MIDI",
+                data=st.session_state.export_midi_bytes,
+                file_name="note_stack.mid",
+                mime="audio/midi",
+                width='stretch',
+                key="save_midi_btn",
+            )
     
     with col4:
-        if st.button("➕ Add Empty Track", width='stretch'):
-            new_track = Track(name=f"Track {len(st.session_state.song.tracks) + 1}")
+        if st.button(f"➕ {t('add_track', lang)}", width='stretch'):
+            new_track = Track(
+                name=f"Track {len(st.session_state.song.tracks) + 1}",
+                role="other",
+            )
             st.session_state.song.tracks.append(new_track)
             st.rerun()
     
@@ -1248,7 +1160,7 @@ def main():
     st.write("---")
     
     if not st.session_state.song.tracks:
-        st.info("💡 No tracks yet. Generate a Number Melody above or add an empty track to get started!")
+        st.info(f"💡 {t('no_tracks', lang)}")
     else:
         # ========== ALL TRACKS COMBINED CHART ==========
         st.subheader("🎼 All Tracks — Song Overview")
@@ -1265,25 +1177,37 @@ def main():
         st.subheader("📋 Individual Tracks")
         
         for track_idx, track in enumerate(st.session_state.song.tracks):
+            tid = track.id
             # Determine track role from name prefix
-            role_emoji = "🎵" if "Solo" in track.name else "🎸" if "Base" in track.name else "✨" if "Adorn" in track.name else "🎹"
+            role_emoji = {"solo": "🎵", "base": "🎸", "adorn": "✨"}.get(track.role, "🎹")
             
             with st.expander(f"{role_emoji} {track.name}" + (" (MUTED)" if track.mute else ""), 
                             expanded=(track_idx == 0 and len(st.session_state.song.tracks) <= 3)):
                 
                 # Track controls
-                col1, col2, col3 = st.columns([2, 1, 1])
+                col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
                 
                 with col1:
                     track.name = st.text_input("Track Name", track.name, 
-                                              key=f"name_{track_idx}")
+                                              key=f"name_{tid}")
                 
                 with col2:
-                    track.mute = st.checkbox("Mute", track.mute, key=f"mute_{track_idx}")
+                    role_options = ["solo", "base", "adorn", "other"]
+                    current_role = track.role if track.role in role_options else "other"
+                    track.role = st.selectbox(
+                        t("role", lang),
+                        options=role_options,
+                        index=role_options.index(current_role),
+                        key=f"role_{tid}",
+                        help=t("role_help", lang),
+                    )
                 
                 with col3:
+                    track.mute = st.checkbox("Mute", track.mute, key=f"mute_{tid}")
+                
+                with col4:
                     if len(st.session_state.song.tracks) > 1:
-                        if st.button("🗑️ Remove Track", key=f"remove_{track_idx}", width='stretch'):
+                        if st.button("🗑️ Remove Track", key=f"remove_{tid}", width='stretch'):
                             st.session_state.song.tracks.pop(track_idx)
                             st.rerun()
                 
@@ -1291,38 +1215,38 @@ def main():
                 col1, col2, col3 = st.columns([1, 1, 2])
                 
                 with col1:
-                    track.loop_enabled = st.checkbox("🔁 Loop", track.loop_enabled, 
-                                                    key=f"loop_{track_idx}",
-                                                    help="Repeat this track's pattern across the timeline")
+                    track.loop_enabled = st.checkbox(
+                        f"🔁 {t('loop', lang)}",
+                        track.loop_enabled,
+                        key=f"loop_{tid}",
+                        help=t("loop_help", lang),
+                    )
                 
                 with col2:
                     if track.loop_enabled:
                         track.loop_length_beats = st.number_input(
-                            "Loop beats",
+                            t("loop_beats", lang),
                             min_value=0.0,
                             max_value=128.0,
                             value=track.loop_length_beats,
                             step=0.5,
-                            key=f"loop_len_{track_idx}",
-                            help="Loop length in beats (0 = until song end)"
+                            key=f"loop_len_{tid}",
+                            help=t("loop_beats_help", lang),
                         )
-                        if track.loop_length_beats == 0:
-                            st.caption("↻ Until song end")
-                        else:
-                            st.caption(f"↻ {track.loop_length_beats} beats")
+                        st.caption("↻ " + t("loop_help", lang))
                 
                 with col3:
                     if track.loop_enabled:
-                        st.caption("💡 Track will repeat its pattern across the song timeline")
+                        st.caption(t("loop_help", lang))
                 
                 # FX Calibration (add effects on demand)
                 st.write("**🎛️ FX / Efectos**")
                 
                 # Initialize active effects for this track in session state
-                if f"active_fx_{track_idx}" not in st.session_state:
-                    st.session_state[f"active_fx_{track_idx}"] = set()
+                if f"active_fx_{tid}" not in st.session_state:
+                    st.session_state[f"active_fx_{tid}"] = set()
                 
-                active_fx = st.session_state[f"active_fx_{track_idx}"]
+                active_fx = st.session_state[f"active_fx_{tid}"]
                 
                 # Add effect button and selector
                 col1, col2, col3 = st.columns([1, 1, 2])
@@ -1340,20 +1264,20 @@ def main():
                         effect_to_add = st.selectbox(
                             "Select effect",
                             available_effects,
-                            key=f"fx_select_{track_idx}",
+                            key=f"fx_select_{tid}",
                             label_visibility="collapsed"
                         )
                 
                 with col2:
-                    if available_effects and st.button("➕ Agregar efecto / Add effect", key=f"add_fx_{track_idx}", width='stretch'):
+                    if available_effects and st.button("➕ Agregar efecto / Add effect", key=f"add_fx_{tid}", width='stretch'):
                         # Add the selected effect
                         effect_key = effect_to_add.lower()
                         active_fx.add(effect_key)
-                        st.session_state[f"active_fx_{track_idx}"] = active_fx
+                        st.session_state[f"active_fx_{tid}"] = active_fx
                         st.rerun()
                 
                 with col3:
-                    if st.button("🔄 Piano Defaults", key=f"fx_reset_{track_idx}",
+                    if st.button("🔄 Piano Defaults", key=f"fx_reset_{tid}",
                                help="Reset FX to piano defaults: I=1.0, hold=0.8s, delay=on",
                                width='stretch'):
                         # Set piano defaults
@@ -1361,7 +1285,7 @@ def main():
                         track.hold_seconds = 0.8
                         track.delay = True
                         # Activate all effects to show piano defaults
-                        st.session_state[f"active_fx_{track_idx}"] = {"intensity", "delay", "hold"}
+                        st.session_state[f"active_fx_{tid}"] = {"intensity", "delay", "hold"}
                         st.success("✓ Piano defaults set")
                         st.rerun()
                 
@@ -1377,14 +1301,15 @@ def main():
                                 "Intensity (harmonic multiplier)",
                                 0.1, 5.0, 
                                 track.intensity, 0.1,
-                                key=f"intensity_{track_idx}",
+                                key=f"intensity_{tid}",
                                 help="1.0=melody, 2.0=bass/rich"
                             )
                             st.caption("1.0=melody, 2.0=bass")
                         with col2:
-                            if st.button("🗑️", key=f"remove_intensity_{track_idx}", help="Remove Intensity effect"):
+                            if st.button("🗑️", key=f"remove_intensity_{tid}", help="Remove Intensity effect"):
                                 active_fx.discard("intensity")
-                                st.session_state[f"active_fx_{track_idx}"] = active_fx
+                                track.intensity = 1.0
+                                st.session_state[f"active_fx_{tid}"] = active_fx
                                 st.rerun()
                     
                     # Delay effect
@@ -1394,14 +1319,15 @@ def main():
                             track.delay = st.checkbox(
                                 "Delay (30/160s echo)",
                                 track.delay,
-                                key=f"delay_{track_idx}",
+                                key=f"delay_{tid}",
                                 help="Enable 30/160s delay voice"
                             )
                             st.caption("Echo at 30/160s")
                         with col2:
-                            if st.button("🗑️", key=f"remove_delay_{track_idx}", help="Remove Delay effect"):
+                            if st.button("🗑️", key=f"remove_delay_{tid}", help="Remove Delay effect"):
                                 active_fx.discard("delay")
-                                st.session_state[f"active_fx_{track_idx}"] = active_fx
+                                track.delay = False
+                                st.session_state[f"active_fx_{tid}"] = active_fx
                                 st.rerun()
                     
                     # Hold effect
@@ -1412,113 +1338,46 @@ def main():
                                 "Hold (sustain duration in seconds)",
                                 0.1, 5.0,
                                 track.hold_seconds, 0.1,
-                                key=f"hold_{track_idx}",
+                                key=f"hold_{tid}",
                                 help="Note sustain duration"
                             )
                             st.caption("0.5=short, 0.8=piano, 2.0=long")
                         with col2:
-                            if st.button("🗑️", key=f"remove_hold_{track_idx}", help="Remove Hold effect"):
+                            if st.button("🗑️", key=f"remove_hold_{tid}", help="Remove Hold effect"):
                                 active_fx.discard("hold")
-                                st.session_state[f"active_fx_{track_idx}"] = active_fx
+                                track.hold_seconds = 0.8
+                                st.session_state[f"active_fx_{tid}"] = active_fx
                                 st.rerun()
                 else:
                     st.caption("💡 No effects active. Add effects above to calibrate this track's sound.")
                 
                 # AI Fill buttons
-                st.write("**🤖 AI Fill Track** (V1 heuristics)")
+                st.write(f"**🤖 {t('ai_fill', lang)}**")
                 col1, col2, col3, col4 = st.columns(4)
                 
-                # Collect mashup source tracks (exclude current track)
-                mashup_sources = [t for i, t in enumerate(st.session_state.song.tracks) 
-                                 if i != track_idx and "Solo" not in t.name]
-                
                 with col1:
-                    if st.button("Bass Line", key=f"gen_bass_{track_idx}", 
+                    if st.button("Bass Line", key=f"gen_bass_{tid}",
                                help="Generate bass (keys 1-28) from other tracks",
                                width='stretch'):
-                        if mashup_sources:
-                            try:
-                                gen_func = PATTERN_GENERATORS["bass_line"]
-                                new_notes = gen_func(
-                                    mashup_sources, 
-                                    st.session_state.song.bpm,
-                                    key_lo=1,
-                                    key_hi=28
-                                )
-                                track.notes = new_notes
-                                track.name = "🎸 Base: Bass Line"
-                                st.success(f"✓ Generated {len(new_notes)} bass notes")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Error: {str(e)}")
-                        else:
-                            st.warning("⚠️ Need other tracks as source")
-                
+                        apply_ai_fill(track, "bass_line", "🎸 Base: Bass Line", 1, 28)
+
                 with col2:
-                    if st.button("Chord Base", key=f"gen_chords_{track_idx}",
+                    if st.button("Chord Base", key=f"gen_chords_{tid}",
                                help="Generate chords (keys 29-52) from other tracks",
                                width='stretch'):
-                        if mashup_sources:
-                            try:
-                                gen_func = PATTERN_GENERATORS["chord_base"]
-                                new_notes = gen_func(
-                                    mashup_sources,
-                                    st.session_state.song.bpm,
-                                    key_lo=29,
-                                    key_hi=52
-                                )
-                                track.notes = new_notes
-                                track.name = "🎸 Base: Chords"
-                                st.success(f"✓ Generated {len(new_notes)} chord notes")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Error: {str(e)}")
-                        else:
-                            st.warning("⚠️ Need other tracks as source")
-                
+                        apply_ai_fill(track, "chord_base", "🎸 Base: Chords", 29, 52)
+
                 with col3:
-                    if st.button("Adorn Pluck", key=f"gen_pluck_{track_idx}",
+                    if st.button("Adorn Pluck", key=f"gen_pluck_{tid}",
                                help="Generate sparse plucks (keys 45-72)",
                                width='stretch'):
-                        if mashup_sources:
-                            try:
-                                gen_func = PATTERN_GENERATORS["adorn_pluck"]
-                                new_notes = gen_func(
-                                    mashup_sources,
-                                    st.session_state.song.bpm,
-                                    key_lo=45,
-                                    key_hi=72
-                                )
-                                track.notes = new_notes
-                                track.name = "✨ Adorn: Pluck"
-                                st.success(f"✓ Generated {len(new_notes)} pluck notes")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Error: {str(e)}")
-                        else:
-                            st.warning("⚠️ Need other tracks as source")
-                
+                        apply_ai_fill(track, "adorn_pluck", "✨ Adorn: Pluck", 45, 72)
+
                 with col4:
-                    if st.button("Harmony Line", key=f"gen_harmony_{track_idx}",
+                    if st.button("Harmony Line", key=f"gen_harmony_{tid}",
                                help="Harmonize melody (keys 45-72)",
                                width='stretch'):
-                        if mashup_sources:
-                            try:
-                                gen_func = PATTERN_GENERATORS["harmony_line"]
-                                new_notes = gen_func(
-                                    mashup_sources,
-                                    st.session_state.song.bpm,
-                                    key_lo=45,
-                                    key_hi=72
-                                )
-                                track.notes = new_notes
-                                track.name = "✨ Adorn: Harmony"
-                                st.success(f"✓ Generated {len(new_notes)} harmony notes")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Error: {str(e)}")
-                        else:
-                            st.warning("⚠️ Need other tracks as source")
+                        apply_ai_fill(track, "harmony_line", "✨ Adorn: Harmony", 45, 72)
                 
                 st.write("---")
                 
@@ -1538,23 +1397,22 @@ def main():
                         options=[0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0],
                         index=1,  # 0.5 default
                         format_func=format_duration_label,
-                        key=f"rest_dur_{track_idx}",
+                        key=f"rest_dur_{tid}",
                         help="Duration of silence to insert"
                     )
                 
                 with col2:
-                    if st.button("➕ Insert Rest at End", key=f"insert_rest_end_{track_idx}"):
-                        # Find current end beat
-                        if track.notes:
-                            end_beat = max(n.start_beat + n.duration_beats for n in track.notes)
-                        else:
-                            end_beat = 0.0
-                        
-                        # Don't add a note - just shift the timeline by creating a marker
-                        # Actually, to insert silence, we don't add notes - the gap IS the silence
-                        # But we can add it to the cluster state for visual feedback
-                        st.success(f"✓ Rest of {format_duration_label(rest_duration)} beats marked at end ({end_beat:.1f})")
-                        st.caption("💡 Rests are gaps between notes - paste new clusters to continue after the gap")
+                    if st.button("➕ Insert Rest at End", key=f"insert_rest_end_{tid}"):
+                        rest_key = pending_rest_key(track)
+                        st.session_state[rest_key] = st.session_state.get(rest_key, 0.0) + rest_duration
+                        end_beat = max((n.start_beat + n.duration_beats for n in track.notes), default=0.0)
+                        st.success(
+                            f"✓ Rest of {format_duration_label(rest_duration)} beats "
+                            f"queued after {end_beat:.1f} (next paste starts later)"
+                        )
+                    pending = st.session_state.get(pending_rest_key(track), 0.0)
+                    if pending:
+                        st.caption(f"Queued end rest: {format_duration_label(pending)} beats")
                 
                 with col3:
                     rest_position = st.number_input(
@@ -1562,10 +1420,10 @@ def main():
                         min_value=0.0,
                         value=0.0,
                         step=0.5,
-                        key=f"rest_pos_{track_idx}",
+                        key=f"rest_pos_{tid}",
                         help="Insert rest at specific beat position"
                     )
-                    if st.button("➕ Insert Rest Here", key=f"insert_rest_pos_{track_idx}"):
+                    if st.button("➕ Insert Rest Here", key=f"insert_rest_pos_{tid}"):
                         # Find notes after this position and shift them
                         shifted_count = 0
                         for note in track.notes:
@@ -1576,8 +1434,8 @@ def main():
                         if shifted_count > 0:
                             st.success(f"✓ Inserted {format_duration_label(rest_duration)} beat rest at {rest_position:.1f} (shifted {shifted_count} notes)")
                             # Clear cluster cache
-                            if f"clusters_{track_idx}" in st.session_state:
-                                del st.session_state[f"clusters_{track_idx}"]
+                            if f"clusters_{tid}" in st.session_state:
+                                del st.session_state[f"clusters_{tid}"]
                             st.rerun()
                         else:
                             st.info(f"No notes after beat {rest_position:.1f} to shift")
@@ -1593,7 +1451,7 @@ def main():
                 with col1:
                     cluster_input = st.text_input(
                         "Cluster string (e.g., 35-35,36-38-35)",
-                        key=f"cluster_input_{track_idx}",
+                        key=f"cluster_input_{tid}",
                         placeholder="35-35,36-38-35",
                         help="Syntax: dash (-) separates clusters, comma (,) separates keys within a cluster"
                     )
@@ -1604,11 +1462,11 @@ def main():
                         options=[0.25, 0.5, 0.75, 1.0, 2.0],
                         index=1,  # 0.5 default
                         format_func=format_duration_label,
-                        key=f"default_dur_{track_idx}"
+                        key=f"default_dur_{tid}"
                     )
                 
                 with col3:
-                    if st.button("📥 Paste", key=f"paste_cluster_{track_idx}"):
+                    if st.button("📥 Paste", key=f"paste_cluster_{tid}"):
                         if cluster_input.strip():
                             try:
                                 new_clusters, warnings = parse_cluster_string(cluster_input, default_duration)
@@ -1619,17 +1477,17 @@ def main():
                                         st.warning(warning)
                                 
                                 if new_clusters:
-                                    # Append to existing notes
                                     existing_clusters = notes_to_clusters(track.notes)
-                                    
-                                    # Offset new clusters to start after existing
+                                    last_end = 0.0
                                     if existing_clusters:
                                         last_end = max(c.start_beat + c.duration_beats for c in existing_clusters)
+                                    last_end += st.session_state.pop(pending_rest_key(track), 0.0)
+                                    if last_end:
                                         for nc in new_clusters:
                                             nc.start_beat += last_end
-                                    
-                                    all_clusters = existing_clusters + new_clusters
-                                    track.notes = clusters_to_notes(all_clusters)
+
+                                    track.notes = clusters_to_notes(existing_clusters + new_clusters)
+                                    invalidate_cluster_cache(track)
                                     st.success(f"✓ Pasted {len(new_clusters)} clusters")
                                     st.rerun()
                                 else:
@@ -1649,13 +1507,13 @@ def main():
                     clusters = notes_to_clusters(track.notes)
                     
                     # Initialize session state for cluster edits
-                    if f"clusters_{track_idx}" not in st.session_state:
-                        st.session_state[f"clusters_{track_idx}"] = clusters
+                    if f"clusters_{tid}" not in st.session_state:
+                        st.session_state[f"clusters_{tid}"] = clusters
                     
                     st.write(f"**Cluster Badges** ({len(clusters)} clusters, {len(track.notes)} notes)")
                     
                     # Display and edit each cluster
-                    for cluster_idx, cluster in enumerate(st.session_state[f"clusters_{track_idx}"]):
+                    for cluster_idx, cluster in enumerate(st.session_state[f"clusters_{tid}"]):
                         cols = st.columns([3, 1, 1, 1, 1])
                         
                         with cols[0]:
@@ -1664,15 +1522,15 @@ def main():
                             new_keys_str = st.text_input(
                                 f"Cluster {cluster_idx}",
                                 value=keys_str,
-                                key=f"cluster_keys_{track_idx}_{cluster_idx}",
+                                key=f"cluster_keys_{tid}_{cluster_idx}",
                                 label_visibility="collapsed"
                             )
                             
                             # Parse keys on change
                             try:
                                 new_keys = [int(k.strip()) for k in new_keys_str.split(',') if k.strip()]
-                                st.session_state[f"clusters_{track_idx}"][cluster_idx].keys = new_keys
-                            except:
+                                st.session_state[f"clusters_{tid}"][cluster_idx].keys = new_keys
+                            except ValueError:
                                 pass
                         
                         with cols[1]:
@@ -1690,14 +1548,14 @@ def main():
                                 options=duration_options,
                                 index=current_idx,
                                 format_func=format_duration_label,
-                                key=f"cluster_dur_{track_idx}_{cluster_idx}",
+                                key=f"cluster_dur_{tid}_{cluster_idx}",
                                 label_visibility="collapsed"
                             )
-                            st.session_state[f"clusters_{track_idx}"][cluster_idx].duration_beats = new_duration
+                            st.session_state[f"clusters_{tid}"][cluster_idx].duration_beats = new_duration
                         
                         with cols[2]:
                             # Insert button
-                            if st.button("➕", key=f"insert_{track_idx}_{cluster_idx}",
+                            if st.button("➕", key=f"insert_{tid}_{cluster_idx}",
                                        help="Insert cluster before this one"):
                                 new_cluster = NoteCluster(
                                     start_beat=cluster.start_beat,
@@ -1705,14 +1563,14 @@ def main():
                                     keys=[49],
                                     velocity=100
                                 )
-                                st.session_state[f"clusters_{track_idx}"].insert(cluster_idx, new_cluster)
+                                st.session_state[f"clusters_{tid}"].insert(cluster_idx, new_cluster)
                                 st.rerun()
                         
                         with cols[3]:
                             # Delete button
-                            if st.button("🗑️", key=f"delete_{track_idx}_{cluster_idx}",
+                            if st.button("🗑️", key=f"delete_{tid}_{cluster_idx}",
                                        help="Delete this cluster"):
-                                st.session_state[f"clusters_{track_idx}"].pop(cluster_idx)
+                                st.session_state[f"clusters_{tid}"].pop(cluster_idx)
                                 st.rerun()
                         
                         with cols[4]:
@@ -1724,26 +1582,26 @@ def main():
                     # Apply clusters button
                     col1, col2 = st.columns([1, 3])
                     with col1:
-                        if st.button("✅ Apply Changes", key=f"apply_clusters_{track_idx}",
+                        if st.button("✅ Apply Changes", key=f"apply_clusters_{tid}",
                                    type="primary"):
                             # Reassign start_beats sequentially
                             current_beat = 0.0
-                            for c in st.session_state[f"clusters_{track_idx}"]:
+                            for c in st.session_state[f"clusters_{tid}"]:
                                 c.start_beat = current_beat
                                 current_beat += c.duration_beats
                             
                             # Convert to notes
-                            track.notes = clusters_to_notes(st.session_state[f"clusters_{track_idx}"])
+                            track.notes = clusters_to_notes(st.session_state[f"clusters_{tid}"])
                             
                             # Clear session state to refresh
-                            del st.session_state[f"clusters_{track_idx}"]
+                            del st.session_state[f"clusters_{tid}"]
                             
                             st.success(f"✓ Applied {len(track.notes)} notes")
                             st.rerun()
                     
                     with col2:
-                        if st.button("🔄 Refresh from Track", key=f"refresh_clusters_{track_idx}"):
-                            st.session_state[f"clusters_{track_idx}"] = notes_to_clusters(track.notes)
+                        if st.button("🔄 Refresh from Track", key=f"refresh_clusters_{tid}"):
+                            st.session_state[f"clusters_{tid}"] = notes_to_clusters(track.notes)
                             st.rerun()
                     
                     # Advanced table editor (collapsed)
@@ -1794,13 +1652,13 @@ def main():
                                     required=True
                                 )
                             },
-                            key=f"notes_table_{track_idx}"
+                            key=f"notes_table_{tid}"
                         )
                         
                         col1, col2, col3 = st.columns([1, 1, 2])
                         
                         with col1:
-                            if st.button("✅ Apply Table", key=f"apply_table_{track_idx}"):
+                            if st.button("✅ Apply Table", key=f"apply_table_{tid}"):
                                 new_notes = []
                                 for _, row in edited_df.iterrows():
                                     if pd.notna(row['Key']) and pd.notna(row['Start Beat']) and pd.notna(row['Duration']):
@@ -1812,19 +1670,19 @@ def main():
                                         ))
                                 
                                 track.notes = new_notes
-                                if f"clusters_{track_idx}" in st.session_state:
-                                    del st.session_state[f"clusters_{track_idx}"]
+                                if f"clusters_{tid}" in st.session_state:
+                                    del st.session_state[f"clusters_{tid}"]
                                 st.success(f"✓ Applied table: {len(new_notes)} notes")
                                 st.rerun()
                         
                         with col2:
                             beat_range = st.text_input(
                                 "Delete beats (e.g., 4-8)",
-                                key=f"del_range_{track_idx}",
+                                key=f"del_range_{tid}",
                                 placeholder="4-8"
                             )
                             
-                            if st.button("🗑️ Delete Range", key=f"del_range_btn_{track_idx}"):
+                            if st.button("🗑️ Delete Range", key=f"del_range_btn_{tid}"):
                                 try:
                                     if "-" in beat_range:
                                         start_beat, end_beat = map(float, beat_range.split("-"))
@@ -1832,8 +1690,8 @@ def main():
                                         track.notes = [n for n in track.notes 
                                                      if not (start_beat <= n.start_beat < end_beat)]
                                         deleted = original_count - len(track.notes)
-                                        if f"clusters_{track_idx}" in st.session_state:
-                                            del st.session_state[f"clusters_{track_idx}"]
+                                        if f"clusters_{tid}" in st.session_state:
+                                            del st.session_state[f"clusters_{tid}"]
                                         st.success(f"✓ Deleted {deleted} notes in range {start_beat}-{end_beat}")
                                         st.rerun()
                                 except Exception as e:
@@ -1857,35 +1715,29 @@ def main():
                 st.success("✓ Loaded Piano Song (Desmos)")
                 st.rerun()
             
-            # MIDI upload
-            uploaded_file = st.file_uploader("Upload MIDI file", type=["mid", "midi"])
-            if uploaded_file is not None:
+            uploaded_file = st.file_uploader("Upload MIDI file", type=["mid", "midi"], key="legacy_midi_upload")
+            if consume_uploaded_file(uploaded_file):
                 try:
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".mid") as tmp_file:
-                        tmp_file.write(uploaded_file.read())
-                        tmp_path = tmp_file.name
-                    
-                    st.session_state.song = load_midi(tmp_path)
-                    os.unlink(tmp_path)
-                    
+                    tmp_path = write_temp_midi(uploaded_file)
+                    try:
+                        st.session_state.song = load_midi(tmp_path)
+                    finally:
+                        if os.path.exists(tmp_path):
+                            os.unlink(tmp_path)
                     st.success(f"✓ Loaded {uploaded_file.name}")
                     st.rerun()
-                except Exception as e:
-                    st.error(f"Error loading MIDI: {str(e)}")
+                except (OSError, ValueError, EOFError) as e:
+                    st.error(f"Error loading MIDI: {e}")
         
         with col2:
-            # Demo selector
-            demos_dir = Path("demos")
-            if demos_dir.exists():
-                demo_files = sorted([f.stem for f in demos_dir.glob("*.mid")])
-                if demo_files:
-                    selected_demo = st.selectbox("MAESTRO Demos", demo_files)
-                    
-                    if st.button("Load Demo"):
-                        demo_path = demos_dir / f"{selected_demo}.mid"
-                        st.session_state.song = load_midi(str(demo_path))
-                        st.success(f"✓ Loaded {selected_demo}")
-                        st.rerun()
+            demo_files = list_demo_stems()
+            if demo_files:
+                selected_demo = st.selectbox("MAESTRO Demos", demo_files)
+                if st.button("Load Demo"):
+                    demo_path = Path("demos") / f"{selected_demo}.mid"
+                    st.session_state.song = load_midi(str(demo_path))
+                    st.success(f"✓ Loaded {selected_demo}")
+                    st.rerun()
 
 
 if __name__ == "__main__":

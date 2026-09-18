@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Test script to verify all UX bug fixes."""
 
+import sys
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 import time
 import numpy as np
 from notes import Song, Track, Note

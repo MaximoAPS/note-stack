@@ -1,18 +1,22 @@
 """MIDI import and export functionality."""
 
+import io
+from typing import Dict, List
+
 import mido
-from typing import List, Dict
-from notes import Song, Track, Note
+
+from notes import Note, Song, Track, key_from_midi_note, midi_note_from_key, song_span_beats
+from track_helpers import expand_looped_track
 
 
 def midi_note_to_key(midi_note: int) -> int:
-    """Convert MIDI note number to piano key (1-88)."""
-    return midi_note - 20
+    """MIDI note number → piano key 1–88. MIDI 21 (A0) = key 1. MIDI 60 (C4) = key 40."""
+    return key_from_midi_note(midi_note)
 
 
 def key_to_midi_note(key: int) -> int:
-    """Convert piano key (1-88) to MIDI note number."""
-    return key + 20
+    """Piano key 1–88 → MIDI note number. Key 40 (C4) = MIDI 60. Key 49 (A4) = MIDI 69."""
+    return midi_note_from_key(key)
 
 
 def load_midi(filename: str) -> Song:
@@ -101,26 +105,27 @@ def load_midi(filename: str) -> Song:
     return Song(bpm=bpm, tracks=tracks)
 
 
-def export_midi(filename: str, song: Song) -> None:
-    """Export Song to MIDI file."""
+def song_to_midi(song: Song) -> mido.MidiFile:
+    """Build a MIDI file from a Song, expanding looped tracks."""
     mid = mido.MidiFile(ticks_per_beat=480)
-    
-    # Set tempo
+
     tempo_track = mido.MidiTrack()
     mid.tracks.append(tempo_track)
     tempo_microseconds = int(60000000 / song.bpm)
     tempo_track.append(mido.MetaMessage('set_tempo', tempo=tempo_microseconds, time=0))
-    
-    # Create a track for each song track
-    for track_idx, track in enumerate(song.tracks):
+
+    song_end = song_span_beats(song, include_muted=False)
+
+    for track in song.tracks:
         if track.mute:
             continue
-        
+
+        expanded = expand_looped_track(track, song_end)
+
         midi_track = mido.MidiTrack()
         mid.tracks.append(midi_track)
-        
-        # Sort notes by start time
-        sorted_notes = sorted(track.notes, key=lambda n: n.start_beat)
+
+        sorted_notes = sorted(expanded.notes, key=lambda n: n.start_beat)
         
         # Convert notes to MIDI events
         events = []
@@ -148,5 +153,18 @@ def export_midi(filename: str, song: Song) -> None:
                                               velocity=velocity, time=delta))
             
             current_tick = abs_tick
-    
-    mid.save(filename)
+
+    return mid
+
+
+def song_to_midi_bytes(song: Song) -> bytes:
+    """Export song to in-memory MIDI bytes."""
+    mid = song_to_midi(song)
+    buf = io.BytesIO()
+    mid.save(file=buf)
+    return buf.getvalue()
+
+
+def export_midi(filename: str, song: Song) -> None:
+    """Export Song to MIDI file."""
+    song_to_midi(song).save(filename)

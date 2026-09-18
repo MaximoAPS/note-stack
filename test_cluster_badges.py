@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Test cluster badge functionality."""
 
+import sys
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 from app import (
     parse_cluster_string,
     format_duration_label,
@@ -13,7 +17,8 @@ from notes import Note
 print("Testing cluster badge functionality...")
 
 # Test 1: Parse cluster string
-clusters = parse_cluster_string("35-35,36-38-35", 0.5)
+clusters, warnings = parse_cluster_string("35-35,36-38-35", 0.5)
+assert warnings == []
 assert len(clusters) == 4
 assert clusters[0].keys == [35]
 assert clusters[1].keys == [35, 36]

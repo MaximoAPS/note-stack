@@ -1,6 +1,9 @@
 """Smoke test for editor session."""
 
 import sys
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 from notes import Song, Track, Note
 from editor_session import EditorSession
 

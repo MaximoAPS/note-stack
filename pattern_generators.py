@@ -2,9 +2,8 @@
 
 from typing import List, Optional
 from copy import deepcopy
-import random
 
-from notes import Track, Note
+from notes import Track
 from track_helpers import (
     filter_notes_by_key_range,
     get_lowest_notes_per_beat,
@@ -293,6 +292,42 @@ def generate_harmony(
     harmony_track.delay = True
     
     return harmony_track
+
+
+def run_pattern_generator(
+    generator_id: str,
+    donor_tracks: List[Track],
+    bpm: float,
+    key_lo: int,
+    key_hi: int,
+    num_beats: Optional[float] = None,
+) -> Track:
+    """Run a registered generator with the UI call shape.
+
+    The registry stores metadata dicts, not callables. This adapter is what
+    the Studio buttons should use.
+    """
+    if generator_id not in PATTERN_GENERATORS:
+        raise KeyError(f"Unknown pattern generator: {generator_id}")
+
+    spec = PATTERN_GENERATORS[generator_id]
+    generator = spec["generator"]
+    params = dict(spec.get("default_params", {}))
+
+    if num_beats is None:
+        num_beats = 16.0
+        for track in donor_tracks:
+            if track.notes:
+                end = max(n.start_beat + n.duration_beats for n in track.notes)
+                num_beats = max(num_beats, end)
+
+    return generator(
+        donor_tracks,
+        key_range=(key_lo, key_hi),
+        num_beats=num_beats,
+        bpm=bpm,
+        **params,
+    )
 
 
 # Pattern generator registry for UI

@@ -30,7 +30,7 @@ La **Studio UI** proporciona un flujo de trabajo de extremo a extremo para crear
 
 **Pasos:**
 1. Pega una secuencia de dígitos (ej. Pi: `314159265358979...`)
-2. Configura **Tonic** (tónica): 40 = E, 48 = C medio
+2. Configura **Tonic** (tónica): 40 = Do central (tecla de piano, no MIDI 40), 49 = A4
 3. Configura **BPM**: 96 (calmado), 120 (moderado), 160 (rápido)
 4. Elige **Mode** (modo): major, minor, pentatonic, chromatic
 5. **O sube un Solo MIDI**: Usa el cargador "Or upload Solo MIDI"

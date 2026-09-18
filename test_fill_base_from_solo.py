@@ -1,5 +1,9 @@
 """Test Fill Base from Solo feature."""
 
+import sys
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 from notes import Track, Note
 from number_melody import generate_pattern_bass_from_solo, choose_offset_for_solo
 

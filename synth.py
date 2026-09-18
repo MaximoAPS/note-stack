@@ -7,9 +7,14 @@ Recent changes (high whistle fix):
 - Core Desmos formulas (intensity, attack, Box-Muller) unchanged
 """
 
+import hashlib
+import io
+import wave
+
 import numpy as np
-from typing import List, Tuple
-from notes import Song, Track, Note
+from typing import Tuple
+
+from notes import Song, Track, song_span_beats
 from track_helpers import expand_looped_track
 
 
@@ -73,13 +78,21 @@ def key_delay_gain(key: int) -> float:
         return 0.4 * fade
 
 
+def _stable_seed(*parts) -> int:
+    """Deterministic 32-bit seed. Python's hash() is randomized per process."""
+    digest = hashlib.md5()
+    for part in parts:
+        digest.update(repr(part).encode("utf-8"))
+        digest.update(b"\0")
+    return int.from_bytes(digest.digest()[:4], "little")
+
+
 def harmonic_detune_cents(track_idx: int, key: int, start_beat: float, harmonic_num: int) -> float:
     """
     Generate micro-detune in cents (±~3.5 cents) per harmonic.
     Separate seed from decay for organic timbre variation.
     """
-    # Use different hash prefix to separate from decay RNG
-    seed_val = hash(('detune', track_idx, key, start_beat, harmonic_num)) % (2**32)
+    seed_val = _stable_seed("detune", track_idx, key, start_beat, harmonic_num)
     rng = np.random.RandomState(seed_val)
     
     # Uniform distribution ±3.5 cents
@@ -93,8 +106,7 @@ def box_muller_decay(track_idx: int, key: int, start_beat: float, harmonic_num: 
     Mean=10.2, std=3.54. Seeded deterministically for repeatability.
     Scaled by key_decay_scale for realistic piano behavior.
     """
-    # Create deterministic seed from inputs
-    seed_val = hash((track_idx, key, start_beat, harmonic_num)) % (2**32)
+    seed_val = _stable_seed(track_idx, key, start_beat, harmonic_num)
     rng = np.random.RandomState(seed_val)
     
     u1, u2 = rng.uniform(0, 1, 2)
@@ -315,12 +327,7 @@ def synthesize_song(song: Song) -> Tuple[np.ndarray, int]:
     Applies master LP filter, creates Haas stereo, and normalizes.
     Returns (stereo_audio_array, sample_rate) - shape (num_samples, 2).
     """
-    # Calculate total duration
-    total_beats = 0.0
-    for track in song.tracks:
-        if not track.mute and track.notes:
-            max_beat = max(note.start_beat + note.duration_beats for note in track.notes)
-            total_beats = max(total_beats, max_beat)
+    total_beats = song_span_beats(song, include_muted=False)
     
     if total_beats == 0:
         # No notes, return stereo silence
@@ -350,9 +357,8 @@ def synthesize_song(song: Song) -> Tuple[np.ndarray, int]:
                 track_signal = track_signal[:num_samples]
             mixed_mono += track_signal
             
-            # Track max key for adaptive filtering
             if expanded_track.notes:
-                track_max = max(note.key for note in track.notes)
+                track_max = max(note.key for note in expanded_track.notes)
                 max_key_in_song = max(max_key_in_song, track_max)
     
     # Apply adaptive master lowpass: lower cutoff when high keys present
@@ -391,14 +397,19 @@ def synthesize_song(song: Song) -> Tuple[np.ndarray, int]:
     return audio_int16, SAMPLE_RATE
 
 
-def export_wav(filename: str, song: Song) -> None:
-    """Export song to stereo WAV file."""
-    import wave
-    
+def song_to_wav_bytes(song: Song) -> bytes:
+    """Render song to in-memory stereo WAV bytes."""
     audio_data, sample_rate = synthesize_song(song)
-    
-    with wave.open(filename, 'wb') as wav_file:
-        wav_file.setnchannels(2)  # Stereo
-        wav_file.setsampwidth(2)  # 16-bit
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wav_file:
+        wav_file.setnchannels(2)
+        wav_file.setsampwidth(2)
         wav_file.setframerate(sample_rate)
         wav_file.writeframes(audio_data.tobytes())
+    return buf.getvalue()
+
+
+def export_wav(filename: str, song: Song) -> None:
+    """Export song to stereo WAV file."""
+    with open(filename, "wb") as handle:
+        handle.write(song_to_wav_bytes(song))

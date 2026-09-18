@@ -28,7 +28,7 @@ The **Studio UI** provides an end-to-end workflow for creating expressive piano 
    - Shared by Number Melody, Pattern→Base, AI fills, jump_predict, etc.
    - Shows loaded MIDIs with track counts
    - Clear / remove entries individually or all at once
-   - Tools fall back to MIDI-GPT / heuristics / neutral defaults if empty
+   - Tools fall back to MidiGPT (built-in piano prior) / heuristics if empty
 
 2. **Number Sequence → Solo / Melody** — Prominent digit input and solo generation
    - Paste digit sequences (Pi, Fibonacci, dates) right at the top
@@ -76,7 +76,7 @@ Turn any digit sequence into expressive melodies! The Number Melody feature maps
 1. Paste digits of Pi: `3.14159265358979323846...`
 2. Choose chunking: `pair_mod` with modulus 12 (chromatic)
 3. Select multiple style MIDIs (Chopin + Liszt + Scarlatti)
-4. Set tonic 40 (E), max key 64
+4. Set tonic 40 (C4, middle C — piano key, not MIDI 40), max key 64
 5. Generate → Creates melody with musically-sensible rhythms
 
 The system analyzes interval jumps in your style MIDIs and predicts note durations based on melodic motion, creating melodies that feel musical rather than mechanical.
@@ -103,8 +103,8 @@ Generate bass lines that follow a specific ordered pattern! Unlike AI Fill Bass 
 **Example workflow:**
 1. Enter pattern: `3-1-4-1-5` (Pi digits)
 2. Choose mode:
-   - **Offset**: Each digit + offset (e.g., 3+10=13, 1+10=11, 4+10=14...)
-   - **Tonic+Scale**: Map digits to scale degrees in bass octave (e.g., tonic E0=16, chromatic)
+   - **Offset**: Each digit + offset in **piano keys** (e.g., 3+25=28)
+   - **Tonic+Scale**: Map digits to scale degrees (e.g., tonic 28 = C3, chromatic)
 3. Set bass range: min=28 (E1), max=42 (F#2)
 4. Select style MIDIs (Chopin + Liszt) for duration learning
 5. Generate → Creates Base track with pattern `13-11-14-11-15` and learned rhythms
@@ -305,11 +305,12 @@ This runs smoke tests for multi-MIDI session management, track role assignment, 
 ## Piano Key Reference
 
 Piano keys 1-88 correspond to:
-- Key 1: A0 (27.5 Hz)
-- Key 49: A4 (440 Hz) - Concert pitch
-- Key 88: C8 (4,186 Hz)
+- Key 1: A0 (27.5 Hz) = MIDI 21
+- Key 40: C4 (middle C) = MIDI 60
+- Key 49: A4 (440 Hz) = MIDI 69
+- Key 88: C8 (4,186 Hz) = MIDI 108
 
-MIDI conversion: `MIDI note = piano key + 20`
+These are **piano keys 1–88**, not MIDI note numbers. Conversion: `MIDI note = piano key + 20`.
 
 ## License
 

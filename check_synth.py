@@ -1,6 +1,9 @@
 """Test synthesis by rendering Piano Song melody track."""
 
+import os
 import sys
+import tempfile
+
 from notes import Song, Track, Note
 from synth import export_wav
 
@@ -31,13 +34,10 @@ def test_piano_song_melody():
     
     song = Song(bpm=bpm, tracks=[melody_track])
     
-    # Export to WAV
-    output_path = "/tmp/test_piano_song_melody.wav"
+    output_path = os.path.join(tempfile.gettempdir(), "test_piano_song_melody.wav")
     print(f"Rendering melody to {output_path}...")
     export_wav(output_path, song)
     
-    # Check file was created and has reasonable size
-    import os
     if not os.path.exists(output_path):
         print("ERROR: WAV file was not created")
         sys.exit(1)

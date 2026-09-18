@@ -278,12 +278,11 @@ def expand_looped_track(track: Track, song_end_beat: float) -> Track:
     if pattern_length <= 0:
         return result
     
-    # Determine loop target
     if track.loop_length_beats > 0:
-        target_end = min_start + track.loop_length_beats
-    else:
-        # Loop until song end
-        target_end = song_end_beat
+        pattern_length = track.loop_length_beats
+
+    # Always repeat until the song ends
+    target_end = song_end_beat if song_end_beat > min_start else (min_start + pattern_length)
     
     # Generate repeated notes
     looped_notes = []

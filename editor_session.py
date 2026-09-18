@@ -6,6 +6,7 @@ import uuid
 from copy import deepcopy
 
 from notes import Song, Track, Note
+from track_helpers import filter_notes_by_key_range
 
 
 TrackRole = Literal["final", "mashup_source", "ignore"]
@@ -145,19 +146,10 @@ class EditorSession:
         Returns:
             New track with filtered notes
         """
-        if key_lo is None and key_hi is None:
-            return deepcopy(track)
-        
-        filtered_notes = []
-        for note in track.notes:
-            if key_lo is not None and note.key < key_lo:
-                continue
-            if key_hi is not None and note.key > key_hi:
-                continue
-            filtered_notes.append(deepcopy(note))
-        
         filtered_track = deepcopy(track)
-        filtered_track.notes = filtered_notes
+        filtered_track.notes = filter_notes_by_key_range(
+            filtered_track.notes, key_lo, key_hi
+        )
         return filtered_track
     
     def compose_final_song(self) -> Song:
